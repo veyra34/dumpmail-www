@@ -70,37 +70,37 @@ export type Database = {
       }
       campaign_runtime_config: {
         Row: {
-          active_days: number[]
+          active_days: number[] | null
           campaign_id: string
-          end_hour: number
+          end_hour: number | null
           id: string
-          is_paused: boolean
+          is_paused: boolean | null
           last_ran_at: string | null
-          start_hour: number
-          timezone: string
-          updated_at: string
+          start_hour: number | null
+          timezone: string | null
+          updated_at: string | null
         }
         Insert: {
-          active_days?: number[]
+          active_days?: number[] | null
           campaign_id: string
-          end_hour?: number
+          end_hour?: number | null
           id?: string
-          is_paused?: boolean
+          is_paused?: boolean | null
           last_ran_at?: string | null
-          start_hour?: number
-          timezone?: string
-          updated_at?: string
+          start_hour?: number | null
+          timezone?: string | null
+          updated_at?: string | null
         }
         Update: {
-          active_days?: number[]
+          active_days?: number[] | null
           campaign_id?: string
-          end_hour?: number
+          end_hour?: number | null
           id?: string
-          is_paused?: boolean
+          is_paused?: boolean | null
           last_ran_at?: string | null
-          start_hour?: number
-          timezone?: string
-          updated_at?: string
+          start_hour?: number | null
+          timezone?: string | null
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -157,7 +157,9 @@ export type Database = {
       campaigns: {
         Row: {
           created_at: string
+          default_delay_days: number | null
           id: string
+          max_steps: number | null
           name: string
           sender_account_id: string | null
           status: string
@@ -166,7 +168,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          default_delay_days?: number | null
           id?: string
+          max_steps?: number | null
           name: string
           sender_account_id?: string | null
           status?: string
@@ -175,7 +179,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          default_delay_days?: number | null
           id?: string
+          max_steps?: number | null
           name?: string
           sender_account_id?: string | null
           status?: string
@@ -341,41 +347,55 @@ export type Database = {
       leads: {
         Row: {
           company: string | null
-          created_at: string
+          created_at: string | null
           email: string
           id: string
           last_contacted_at: string | null
-          name: string
+          name: string | null
+          private: boolean
           role: string | null
           source: string | null
-          status: string
-          updated_at: string
+          status: string | null
+          updated_at: string | null
+          user_id: string | null
         }
         Insert: {
           company?: string | null
-          created_at?: string
+          created_at?: string | null
           email: string
           id?: string
           last_contacted_at?: string | null
-          name?: string
+          name?: string | null
+          private?: boolean
           role?: string | null
           source?: string | null
-          status?: string
-          updated_at?: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
         }
         Update: {
           company?: string | null
-          created_at?: string
+          created_at?: string | null
           email?: string
           id?: string
           last_contacted_at?: string | null
-          name?: string
+          name?: string | null
+          private?: boolean
           role?: string | null
           source?: string | null
-          status?: string
-          updated_at?: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "leads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       sender_accounts: {
         Row: {

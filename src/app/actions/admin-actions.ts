@@ -55,6 +55,9 @@ export type CreateLeadInput = {
   role?: string;
   source?: string;
   status?: string;
+  private?: boolean;
+  user_id?: string | null;
+  campaign_id?: string | null;
 };
 
 export type CreateSenderInput = {
@@ -76,6 +79,26 @@ export type RuntimeConfigInput = {
   isPaused: boolean;
 };
 
+export type SequenceStepInput = {
+  stepNumber: number;
+  templateId: string;
+  delayDays: number;
+};
+
+export type CreateCampaignInput = RuntimeConfigInput & {
+  name: string;
+  status: string;
+  senderAccountId: string;
+  templateId: string;
+  leadIds: string[];
+  /** Explicitly configured steps (overrides defaults for those positions) */
+  steps: SequenceStepInput[];
+  /** Total number of sequence steps, including default-filled ones */
+  maxSteps: number;
+  /** Default delay days for steps not explicitly configured */
+  defaultDelayDays: number;
+};
+
 export type CampaignLeadDetail = {
   id: string;
   campaign_id: string;
@@ -89,26 +112,16 @@ export type CampaignLeadDetail = {
   created_at: string;
   leads: {
     id: string;
-    name: string;
+    name: string | null;
     email: string;
     company: string | null;
     role: string | null;
     source: string | null;
-    status: string;
+    status: string | null;
     last_contacted_at: string | null;
-    created_at: string;
-    updated_at: string;
+    created_at: string | null;
+    updated_at: string | null;
   } | null;
-};
-
-export type CreateCampaignInput = RuntimeConfigInput & {
-  name: string;
-  status: string;
-  senderAccountId: string;
-  templateId: string;
-  leadIds: string[];
-  followupTemplateId?: string;
-  followupDelayDays?: number;
 };
 
 export async function fetchProfile<T>(userId: string) {
@@ -147,7 +160,7 @@ export async function fetchDashboardStats(userId?: string) {
 
   const [campaigns, leads, templates, senders] = await Promise.all([
     supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("user_id", userId ?? ""),
-    supabase.from("leads").select("id", { count: "exact", head: true }),
+    supabase.from("leads").select("id", { count: "exact", head: true }).or(`user_id.eq.${userId ?? ""},private.eq.false`),
     supabase.from("email_templates").select("id", { count: "exact", head: true }).eq("user_id", userId ?? ""),
     supabase.from("sender_accounts").select("id", { count: "exact", head: true }).eq("user_id", userId ?? ""),
   ]);
@@ -190,26 +203,77 @@ export async function fetchCampaigns<T>(userId: string) {
   return (data ?? []) as T[];
 }
 
-export async function fetchLeads<T>() {
+export async function fetchLeads<T>(userId?: string) {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
-    .from("leads")
-    .select("*")
-    .order("updated_at", { ascending: false });
+
+  let query = supabase.from("leads").select("*");
+
+  if (userId) {
+    query = query.or(`user_id.eq.${userId},private.eq.false`);
+  } else {
+    query = query.eq("private", false);
+  }
+
+  const { data, error } = await query.order("updated_at", { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as T[];
 }
 
-export async function fetchRuntimeConfigs<T>() {
+export async function fetchRuntimeConfigs<T>(campaignId?: string) {
+  const supabase = createServerSupabase();
+  let query = supabase.from("campaign_runtime_config").select("*");
+  if (campaignId) {
+    query = query.eq("campaign_id", campaignId);
+  }
+  const { data, error } = await query.order("updated_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as T[];
+}
+
+export async function fetchCampaignRuntimeConfig<T>(campaignId: string) {
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("campaign_runtime_config")
     .select("*")
-    .order("updated_at", { ascending: false });
+    .eq("campaign_id", campaignId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as T | null;
+}
 
+export async function fetchCampaignSequences<T>(campaignId: string) {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("campaign_sequences")
+    .select("*")
+    .eq("campaign_id", campaignId)
+    .order("step_number", { ascending: true });
   if (error) throw error;
   return (data ?? []) as T[];
+}
+
+export async function upsertCampaignSequences(campaignId: string, steps: SequenceStepInput[]) {
+  const supabase = createServerSupabase();
+
+  // Delete all existing steps for this campaign
+  const { error: deleteError } = await supabase
+    .from("campaign_sequences")
+    .delete()
+    .eq("campaign_id", campaignId);
+  if (deleteError) throw deleteError;
+
+  if (!steps.length) return;
+
+  const { error: insertError } = await supabase.from("campaign_sequences").insert(
+    steps.map((s) => ({
+      campaign_id: campaignId,
+      step_number: s.stepNumber,
+      template_id: s.templateId,
+      delay_days: s.delayDays,
+    }))
+  );
+  if (insertError) throw insertError;
 }
 
 export async function fetchSenders<T>(userId: string) {
@@ -495,8 +559,10 @@ export async function createLead<T>(input: CreateLeadInput) {
         email: input.email,
         company: input.company || null,
         role: input.role || null,
-        source: input.source || "private",
+        source: input.source || "csv",
         status: input.status || "new",
+        private: input.private ?? true,
+        user_id: input.user_id ?? null,
       },
       { onConflict: "email" },
     )
@@ -504,7 +570,107 @@ export async function createLead<T>(input: CreateLeadInput) {
     .single();
 
   if (error) throw error;
+
+  if (input.campaign_id && data) {
+    const now = new Date().toISOString();
+    // Only attach if not already in the campaign (upsert logic will just handle it, but select first to be safe, or just insert on conflict ignore - but supabase JS doesn't do ignore easily without RPC. We'll just select first.)
+    const { data: existing } = await supabase
+      .from("campaign_leads")
+      .select("lead_id")
+      .eq("campaign_id", input.campaign_id)
+      .eq("lead_id", data.id)
+      .single();
+
+    if (!existing) {
+      await supabase.from("campaign_leads").insert({
+        campaign_id: input.campaign_id,
+        lead_id: data.id,
+        current_step: 0,
+        next_send_at: now,
+        status: "pending",
+      });
+    }
+  }
+
   return data as T;
+}
+
+export type BulkImportLeadsResult = {
+  imported: number;
+  skipped: number;
+  errors: { row: number; email: string; reason: string }[];
+};
+
+export async function bulkImportLeads(
+  userId: string,
+  rows: { name: string; email: string; company?: string; role?: string }[],
+  campaignId?: string | null
+): Promise<BulkImportLeadsResult> {
+  const supabase = createServerSupabase();
+  await ensurePublicUserForClient(supabase, userId);
+
+  const result: BulkImportLeadsResult = { imported: 0, skipped: 0, errors: [] };
+  const insertedLeadIds: string[] = [];
+
+  // Upsert leads in chunks of 50
+  const CHUNK = 50;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("leads")
+      .upsert(
+        chunk.map((row) => ({
+          name: row.name || null,
+          email: row.email,
+          company: row.company || null,
+          role: row.role || null,
+          source: "csv",
+          status: "new",
+          private: true,
+          user_id: userId,
+        })),
+        { onConflict: "email" }
+      )
+      .select("id, email");
+
+    if (error) {
+      chunk.forEach((row, j) => {
+        result.errors.push({ row: i + j + 1, email: row.email, reason: error.message });
+        result.skipped++;
+      });
+    } else {
+      result.imported += data?.length ?? 0;
+      insertedLeadIds.push(...(data ?? []).map((d) => d.id));
+    }
+  }
+
+  // Attach to campaign if specified
+  if (campaignId && insertedLeadIds.length > 0) {
+    const now = new Date().toISOString();
+    // Only attach leads not already in the campaign
+    const { data: existing } = await supabase
+      .from("campaign_leads")
+      .select("lead_id")
+      .eq("campaign_id", campaignId)
+      .in("lead_id", insertedLeadIds);
+
+    const existingIds = new Set((existing ?? []).map((e) => e.lead_id));
+    const toAttach = insertedLeadIds.filter((id) => !existingIds.has(id));
+
+    if (toAttach.length > 0) {
+      await supabase.from("campaign_leads").insert(
+        toAttach.map((leadId) => ({
+          campaign_id: campaignId,
+          lead_id: leadId,
+          current_step: 0,
+          next_send_at: now,
+          status: "pending",
+        }))
+      );
+    }
+  }
+
+  return result;
 }
 
 export async function createSenderAccount<T>(userId: string, input: CreateSenderInput) {
@@ -555,9 +721,11 @@ export async function createCampaignWithSetup<T>(userId: string, input: CreateCa
     .insert({
       user_id: userId,
       sender_account_id: input.senderAccountId,
-      template_id: input.templateId,
+      template_id: input.templateId || null,
       name: input.name,
       status: input.status,
+      max_steps: input.maxSteps,
+      default_delay_days: input.defaultDelayDays,
     })
     .select("*")
     .single();
@@ -577,25 +745,28 @@ export async function createCampaignWithSetup<T>(userId: string, input: CreateCa
 
   if (runtimeError) throw runtimeError;
 
-  const sequences = [
-    {
-      campaign_id: campaign.id,
-      step_number: 1,
-      template_id: input.templateId,
-      delay_days: 0,
-    },
-  ];
+  // Expand steps: fill 1..maxSteps, using explicit steps for configured positions,
+  // defaulting to templateId + defaultDelayDays for the rest.
+  const expandedSteps: SequenceStepInput[] = Array.from(
+    { length: input.maxSteps },
+    (_, i) => {
+      const custom = input.steps[i]; // explicit steps are positional (0-indexed)
+      return {
+        stepNumber: i + 1,
+        templateId: custom?.templateId || input.templateId,
+        delayDays: custom ? Number(custom.delayDays) : input.defaultDelayDays,
+      };
+    }
+  );
 
-  if (input.followupTemplateId) {
-    sequences.push({
+  const { error: sequenceError } = await supabase.from("campaign_sequences").insert(
+    expandedSteps.map((s) => ({
       campaign_id: campaign.id,
-      step_number: 2,
-      template_id: input.followupTemplateId,
-      delay_days: input.followupDelayDays ?? 3,
-    });
-  }
-
-  const { error: sequenceError } = await supabase.from("campaign_sequences").insert(sequences);
+      step_number: s.stepNumber,
+      template_id: s.templateId,
+      delay_days: s.delayDays,
+    }))
+  );
   if (sequenceError) throw sequenceError;
 
   const now = new Date().toISOString();
@@ -646,8 +817,9 @@ export async function updateLead<T>(id: string, input: CreateLeadInput) {
       email: input.email,
       company: input.company || null,
       role: input.role || null,
-      source: input.source || "private",
+      source: input.source || "csv",
       status: input.status || "new",
+      private: input.private ?? true,
     })
     .eq("id", id)
     .select("*")
@@ -725,6 +897,8 @@ export async function updateCampaign<T>(
     status: string;
     senderAccountId: string;
     templateId: string;
+    maxSteps: number;
+    defaultDelayDays: number;
     leadIds?: string[];
   }
 ) {
@@ -737,7 +911,9 @@ export async function updateCampaign<T>(
       name: input.name,
       status: input.status,
       sender_account_id: input.senderAccountId,
-      template_id: input.templateId,
+      template_id: input.templateId || null,
+      max_steps: input.maxSteps,
+      default_delay_days: input.defaultDelayDays,
     })
     .eq("id", id)
     .eq("user_id", userId)
@@ -746,23 +922,16 @@ export async function updateCampaign<T>(
 
   if (error) throw error;
 
-  // Also update step 1 in sequences for simplicity (assuming campaign only has 1 or 2 steps and we edit the first one)
-  await supabase
-    .from("campaign_sequences")
-    .update({ template_id: input.templateId })
-    .eq("campaign_id", id)
-    .eq("step_number", 1);
-
   if (input.leadIds) {
     const { data: existingLeads } = await supabase
       .from("campaign_leads")
       .select("lead_id")
       .eq("campaign_id", id);
-      
-    const existingLeadIds = (existingLeads || []).map((l) => l.lead_id);
+
+    const existingLeadIds = (existingLeads ?? []).map((l) => l.lead_id);
     const toRemove = existingLeadIds.filter((l) => !input.leadIds!.includes(l));
     const toAdd = input.leadIds.filter((l) => !existingLeadIds.includes(l));
-    
+
     if (toRemove.length > 0) {
       await supabase
         .from("campaign_leads")
@@ -770,7 +939,7 @@ export async function updateCampaign<T>(
         .eq("campaign_id", id)
         .in("lead_id", toRemove);
     }
-    
+
     if (toAdd.length > 0) {
       const now = new Date().toISOString();
       await supabase.from("campaign_leads").insert(
