@@ -71,9 +71,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
+        // User was deleted or session was revoked server-side — kick them out.
+        if (event === "SIGNED_OUT" || event === "USER_DELETED") {
+          clearAuthState();
+          setLoading(false);
+          window.location.replace("/");
+          return;
+        }
+
         setSession(session);
         setUser(session?.user ?? null);
+
         if (session?.user) {
           const verifiedUser = await revalidateSession();
           if (verifiedUser) {
@@ -82,6 +91,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setProfile(null);
         }
+
         setLoading(false);
       }
     );
