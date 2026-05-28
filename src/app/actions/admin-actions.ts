@@ -620,7 +620,7 @@ export async function bulkImportLeads(
     const chunk = rows.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("leads")
-      .upsert(
+      .insert(
         chunk.map((row) => ({
           name: row.name || null,
           email: row.email,
@@ -630,13 +630,15 @@ export async function bulkImportLeads(
           status: "new",
           private: true,
           user_id: userId,
-        })),
-        { onConflict: "email" }
+        }))
       )
       .select("id, email");
 
     if (error) {
       chunk.forEach((row, j) => {
+        if (error.code === "23505") {
+          error.message = "Lead already exists in your contact list or in global contact list";
+        }
         result.errors.push({ row: i + j + 1, email: row.email, reason: error.message });
         result.skipped++;
       });
@@ -822,6 +824,7 @@ export async function updateLead<T>(id: string, input: CreateLeadInput) {
       source: input.source || "csv",
       status: input.status || "new",
       private: input.private ?? true,
+
     })
     .eq("id", id)
     .select("*")
