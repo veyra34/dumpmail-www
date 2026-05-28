@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ensurePublicUserForClient, type AppSupabaseClient, type PublicUserRecord } from "../lib/public-user";
 
+
 type AuthUser = {
   id: string;
   email?: string;

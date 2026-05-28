@@ -21,6 +21,10 @@ export type ForkResult =
   | { ok: true; forkFullName: string }
   | { ok: false; error: string };
 
+export type StepResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 type GitHubPublicKey = {
   key_id: string;
   key: string;
@@ -114,7 +118,7 @@ async function getGitHubLogin(token: string): Promise<string> {
 }
 
 /** Fork SOURCE_OWNER/SOURCE_REPO into the authenticated user's account. */
-async function forkRepo(token: string): Promise<void> {
+async function forkRepoInternal(token: string): Promise<void> {
   if (!SOURCE_OWNER || !SOURCE_REPO) {
     throw new Error(
       "GITHUB_REPO_OWNER and GITHUB_REPO_NAME env vars must be set",
@@ -130,7 +134,8 @@ async function forkRepo(token: string): Promise<void> {
     },
   );
 
-  if (!res.ok && res.status !== 202) {
+  // 202 = fork accepted (async), 422 = already forked — both are fine.
+  if (!res.ok && res.status !== 202 && res.status !== 422) {
     const body = await res.text();
     throw new Error(`Fork request failed: ${res.status} — ${body}`);
   }
@@ -221,7 +226,7 @@ export async function forkAndConfigureRepo(
     const login = await getGitHubLogin(githubToken);
 
     // 2. Fork the repo (async on GitHub side)
-    await forkRepo(githubToken);
+    await forkRepoInternal(githubToken);
 
     // 3. Wait until the fork is ready
     await waitForFork(githubToken, login);
@@ -246,6 +251,64 @@ export async function forkAndConfigureRepo(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[forkAndConfigureRepo]", message);
+    return { ok: false, error: message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Split server actions for granular UI progress tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Step 1 of 2: Fork the repo and wait for it to be ready.
+ * Returns the GitHub login (used by the next step).
+ */
+export async function forkRepoStep(
+  githubToken: string,
+): Promise<{ ok: true; login: string } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    await forkRepoInternal(githubToken);
+    await waitForFork(githubToken, login);
+    return { ok: true, login };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[forkRepoStep]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Step 2 of 2: Inject Actions secrets into the already-forked repo.
+ */
+export async function injectSecretsStep(
+  githubToken: string,
+  login: string,
+  supabaseUserId: string,
+): Promise<StepResult> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    if (!login) throw new Error("GitHub login is required");
+    if (!supabaseUserId) throw new Error("No Supabase user ID provided");
+
+    const { key_id, key } = await getRepoPublicKey(githubToken, login);
+
+    const secrets: Record<string, string> = {
+      SUPABASE_USER_ID: supabaseUserId,
+      SUPABASE_URL: SUPABASE_URL,
+      SUPABASE_PUBLISHABLE_KEY: SUPABASE_PUBLISHABLE_KEY,
+    };
+
+    for (const [name, value] of Object.entries(secrets)) {
+      const encryptedValue = encryptSecret(key, value);
+      await putSecret(githubToken, login, name, value, key_id, encryptedValue);
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[injectSecretsStep]", message);
     return { ok: false, error: message };
   }
 }

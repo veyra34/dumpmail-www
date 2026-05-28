@@ -45,9 +45,13 @@ export async function loginWithGitHub() {
 export async function persistUserFromAccessToken(accessToken: string) {
   const supabase = createServerSupabase();
 
-  // Verify token with Supabase Auth and get canonical user
+  // Use the admin API (service-role) to get the user from the JWT.
+  // auth.getUser(jwt) on a service-role client verifies the JWT and returns the user.
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
-  if (userError) throw userError;
+  if (userError) {
+    console.error("[persistUserFromAccessToken] getUser error:", userError);
+    throw userError;
+  }
 
   const user = userData?.user;
   if (!user) throw new Error("Unable to resolve user from access token");
@@ -59,21 +63,29 @@ export async function persistUserFromAccessToken(accessToken: string) {
     name: getDisplayName(user),
   };
 
+  console.log("[persistUserFromAccessToken] Upserting user:", userRecord.id, userRecord.email, userRecord.name);
+
   // Upsert into public.users using the service-role server client.
+  // Service role bypasses RLS, so this should always succeed.
   try {
-    const { data, error } = await supabase.schema("public")
+    const { data, error } = await supabase
       .from("users")
       .upsert(userRecord, { onConflict: "id" })
       .select("id,name,email,created_at")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error("[persistUserFromAccessToken] upsert error:", error);
+      throw error;
+    }
+    console.log("[persistUserFromAccessToken] Upserted successfully:", data);
     return data as PublicUserRecord;
   } catch (e: unknown) {
     // If email is unique and belongs to an old public user id, merge that row
     // into the Supabase auth id without rewriting a referenced primary key.
     if (typeof e === "object" && e !== null && "code" in e && e.code === "23505") {
-      const { data: existing, error: fetchError } = await supabase.schema("public")
+      console.log("[persistUserFromAccessToken] Email conflict, attempting merge...");
+      const { data: existing, error: fetchError } = await supabase
         .from("users")
         .select("id,name,email,created_at")
         .eq("email", user.email)
@@ -84,7 +96,7 @@ export async function persistUserFromAccessToken(accessToken: string) {
 
       const existingUser = existing as PublicUserRecord;
       if (existingUser.id === userRecord.id) {
-        const { data: updated, error: updateError } = await supabase.schema("public")
+        const { data: updated, error: updateError } = await supabase
           .from("users")
           .update({ name: userRecord.name })
           .select("id,name,email,created_at")
@@ -96,14 +108,14 @@ export async function persistUserFromAccessToken(accessToken: string) {
       }
 
       const temporaryEmail = `${existingUser.email}#merged-${existingUser.id}`;
-      const { error: releaseEmailError } = await supabase.schema("public")
+      const { error: releaseEmailError } = await supabase
         .from("users")
         .update({ email: temporaryEmail })
         .eq("id", existingUser.id);
 
       if (releaseEmailError) throw releaseEmailError;
 
-      const { data: mergedUser, error: mergedUserError } = await supabase.schema("public")
+      const { data: mergedUser, error: mergedUserError } = await supabase
         .from("users")
         .upsert(userRecord, { onConflict: "id" })
         .select("id,name,email,created_at")
@@ -112,15 +124,15 @@ export async function persistUserFromAccessToken(accessToken: string) {
       if (mergedUserError) throw mergedUserError;
 
       const [campaigns, templates, senders] = await Promise.all([
-        supabase.schema("public").from("campaigns").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
-        supabase.schema("public").from("email_templates").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
-        supabase.schema("public").from("sender_accounts").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
+        supabase.from("campaigns").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
+        supabase.from("email_templates").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
+        supabase.from("sender_accounts").update({ user_id: userRecord.id }).eq("user_id", existingUser.id),
       ]);
 
       const referenceError = campaigns.error ?? templates.error ?? senders.error;
       if (referenceError) throw referenceError;
 
-      const { error: deleteOldUserError } = await supabase.schema("public")
+      const { error: deleteOldUserError } = await supabase
         .from("users")
         .delete()
         .eq("id", existingUser.id);
