@@ -38,9 +38,7 @@ export async function ensurePublicUser(userId: string) {
 export type CreateTemplateInput = {
   name: string;
   subject: string;
-  bodyHtml?: string;
   bodyText: string;
-  variables?: string[];
   attachmentName?: string | null;
   attachmentPath?: string | null;
   attachmentSize?: number | null;
@@ -376,9 +374,7 @@ export async function createTemplate<T>(userId: string, input: CreateTemplateInp
       user_id: userId,
       name: input.name,
       subject: input.subject,
-      body_html: input.bodyHtml || null,
       body_text: input.bodyText,
-      variables: input.variables || null,
       attachment_name: input.attachmentName || null,
       attachment_path: input.attachmentPath || null,
       attachment_size: input.attachmentSize || null,
@@ -553,23 +549,29 @@ export async function createLead<T>(input: CreateLeadInput) {
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("leads")
-    .upsert(
-      {
-        name: input.name,
-        email: input.email,
-        company: input.company || null,
-        role: input.role || null,
-        source: input.source || "csv",
-        status: input.status || "new",
-        private: input.private ?? true,
-        user_id: input.user_id ?? null,
-      },
-      { onConflict: "email" },
-    )
+    .insert({
+      name: input.name,
+      email: input.email,
+      company: input.company || null,
+      role: input.role || null,
+      source: input.source || "csv",
+      status: input.status || "new",
+      private: input.private ?? true,
+      user_id: input.user_id ?? null,
+    })
     .select("*")
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        data: null,
+        error: "Lead already exists in your contact list or in global contact list. To add it in your compaign either get it from global contact list or from your contact list",
+      };
+    }
+
+    return { data: null, error: error.message };
+  }
 
   if (input.campaign_id && data) {
     const now = new Date().toISOString();
