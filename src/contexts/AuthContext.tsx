@@ -72,27 +72,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        // User was deleted or session was revoked server-side — kick them out.
-        if (event === "SIGNED_OUT") {
-          clearAuthState();
-          setLoading(false);
-          window.location.replace("/");
-          return;
-        }
-
-        setSession(session);
-        setUser(session?.user ?? null);
-
-        if (session?.user) {
-          const verifiedUser = await revalidateSession();
-          if (verifiedUser) {
-            setTimeout(() => fetchProfileData(verifiedUser.id), 0);
+        try {
+          // User was deleted or session was revoked server-side — kick them out.
+          if (event === "SIGNED_OUT") {
+            clearAuthState();
+            setLoading(false);
+            window.location.replace("/");
+            return;
           }
-        } else {
-          setProfile(null);
-        }
 
-        setLoading(false);
+          setSession(session);
+          setUser(session?.user ?? null);
+
+          if (session?.user) {
+            const verifiedUser = await revalidateSession();
+            if (verifiedUser) {
+              setTimeout(() => fetchProfileData(verifiedUser.id), 0);
+            }
+          } else {
+            setProfile(null);
+          }
+        } finally {
+          setLoading(false);
+        }
       }
     );
 
@@ -105,6 +107,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fetchProfileData(verifiedUser.id);
         }
       }
+      setLoading(false);
+    }).catch(() => {
+      // If getSession() rejects (bad env vars, network error, etc.),
+      // we must still clear the loading state or the spinner hangs forever.
+      clearAuthState();
       setLoading(false);
     });
 
