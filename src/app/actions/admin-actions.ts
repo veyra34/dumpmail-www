@@ -411,8 +411,6 @@ export async function updateTemplate<T>(
       name: input.name,
       subject: input.subject,
       body_text: input.bodyText,
-      body_html: null,
-      variables: null,
       attachment_name: input.attachmentName ?? null,
       attachment_path: input.attachmentPath ?? null,
       attachment_size: input.attachmentSize ?? null,
