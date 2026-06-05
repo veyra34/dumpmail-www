@@ -342,7 +342,7 @@ export async function fetchCampaignLeadDetails(userId: string, campaignId: strin
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as CampaignLeadDetail[];
+  return (data ?? []) as unknown as CampaignLeadDetail[];
 }
 
 export async function createTemplate<T>(userId: string, input: CreateTemplateInput) {
@@ -900,35 +900,15 @@ export async function updateCampaign<T>(
   if (error) throw error;
 
   if (input.leadIds) {
-    const { data: existingLeads } = await supabase
-      .from("campaign_leads")
-      .select("lead_id")
-      .eq("campaign_id", id);
+    const { error } = await supabase.rpc(
+      "www_sync_campaign_leads",
+      {
+        p_campaign_id: id,
+        p_lead_ids: input.leadIds,
+      }
+    );
 
-    const existingLeadIds = (existingLeads ?? []).map((l) => l.lead_id);
-    const toRemove = existingLeadIds.filter((l) => !input.leadIds!.includes(l));
-    const toAdd = input.leadIds.filter((l) => !existingLeadIds.includes(l));
-
-    if (toRemove.length > 0) {
-      await supabase
-        .from("campaign_leads")
-        .delete()
-        .eq("campaign_id", id)
-        .in("lead_id", toRemove);
-    }
-
-    if (toAdd.length > 0) {
-      const now = new Date().toISOString();
-      await supabase.from("campaign_leads").insert(
-        toAdd.map((leadId) => ({
-          campaign_id: id,
-          lead_id: leadId,
-          current_step: 0,
-          next_send_at: now,
-          status: "pending",
-        }))
-      );
-    }
+    if (error) throw error;
   }
 
   return data as T;

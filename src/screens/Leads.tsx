@@ -259,7 +259,7 @@ export default function Leads({
 
   const handleStartEdit = (lead: Lead) => {
     setEditingLead(lead);
-    setEditForm({ name: lead.name ?? "", email: lead.email, company: lead.company ?? "", role: lead.role ?? "", source: lead.source ?? "csv", status: lead.status ?? "new", private: lead.private, campaignId: "" });
+    setEditForm({ name: lead.name ?? "", email: lead.email, company: lead.company ?? "", role: lead.role ?? "", source: lead.source ?? "csv", status: lead.status ?? "new", private: lead.private ?? false, campaignId: "" });
     setView("edit");
   };
 
@@ -361,7 +361,7 @@ export default function Leads({
 
   /* ── Stats ──────────────────────────────────────────────────────────────── */
   const activeCount = leads.filter((l) => ["active", "engaged", "replied"].includes((l.status ?? "").toLowerCase())).length;
-  const contactedCount = leads.filter((l) => Boolean(l.last_contacted_at)).length;
+  const contactedCount = leads.filter((l) => Boolean((l as any).last_contacted_at)).length;
 
   /* ── Shared form card ───────────────────────────────────────────────────── */
   const renderFormFields = (form: LeadForm, setForm: React.Dispatch<React.SetStateAction<LeadForm>>) => (
@@ -525,7 +525,7 @@ export default function Leads({
                           )}
                         </TableCell>
                         <TableCell><Badge variant={statusVariant(lead.status)} className="capitalize">{(lead.status ?? "new").replace(/_/g, " ")}</Badge></TableCell>
-                        <TableCell className="text-muted-foreground">{formatDate(lead.last_contacted_at)}</TableCell>
+                        <TableCell className="text-muted-foreground">{formatDate((lead as any).last_contacted_at)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end items-center gap-1">
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(lead)} className="h-8 w-8 hover:bg-secondary" title="Edit"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></Button>

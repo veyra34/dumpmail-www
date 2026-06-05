@@ -31,7 +31,8 @@ function statusVariant(eventType: string) {
   }
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
   return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 

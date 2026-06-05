@@ -224,7 +224,7 @@ export default function Campaigns({
     setLoading(false);
   };
 
-  const activeCount = campaigns.filter((c) => c.status.toLowerCase() === "active").length;
+  const activeCount = campaigns.filter((c) => c.status?.toLowerCase() === "active").length;
 
   /* ── Step helpers ───────────────────────────────────────────────────────── */
   const addStep = (setter: React.Dispatch<React.SetStateAction<StepDraft[]>>) =>
@@ -325,7 +325,7 @@ export default function Campaigns({
       const config = rt as RuntimeConfig | null;
       setEditForm({
         name: campaign.name,
-        status: campaign.status,
+        status: campaign.status ?? "",
         senderAccountId: campaign.sender_account_id ?? "",
         templateId: campaign.template_id ?? "",
         maxSteps: String(campaign.max_steps ?? (seqs.length || 3)),
@@ -820,7 +820,7 @@ export default function Campaigns({
                           {c.name}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={statusVariant(c.status)} className="capitalize">{c.status}</Badge>
+                          <Badge variant={statusVariant(c.status ?? "")} className="capitalize">{c.status}</Badge>
                         </TableCell>
                         <TableCell>{c.max_steps ?? "—"}</TableCell>
                         <TableCell>{c.default_delay_days != null ? `${c.default_delay_days}d` : "—"}</TableCell>
@@ -915,7 +915,7 @@ export default function Campaigns({
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Status</div>
-                <Badge variant={statusVariant(selectedCampaign.status)} className="capitalize">{selectedCampaign.status}</Badge>
+                <Badge variant={statusVariant(selectedCampaign.status ?? "")} className="capitalize">{selectedCampaign.status}</Badge>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Max steps</div>

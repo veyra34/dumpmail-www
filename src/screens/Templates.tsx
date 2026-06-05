@@ -53,7 +53,8 @@ function formatBytes(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(v: string) {
+function formatDate(v: string | null | undefined) {
+  if (!v) return "—";
   return new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
