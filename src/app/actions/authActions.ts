@@ -122,7 +122,7 @@ export async function persistUserFromAccessToken(accessToken: string) {
 
         if (updateError) throw updateError;
         return {
-          user: data as PublicUserRecord,
+          user: updated as PublicUserRecord,
           isNewUser,
         };
       }
