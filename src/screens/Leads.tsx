@@ -280,10 +280,10 @@ export default function Leads({
   };
 
   const handleDeleteConfirm = async () => {
-    if (!leadToDelete) return;
+    if (!leadToDelete || !user) return;
     setSaving(true);
     try {
-      await deleteLead(leadToDelete.id);
+      await deleteLead(user.id, leadToDelete.id);
       toast({ title: "Lead deleted" });
       setLeadToDelete(null);
       setDeleteDialogOpen(false);
@@ -529,7 +529,9 @@ export default function Leads({
                         <TableCell className="text-right">
                           <div className="flex justify-end items-center gap-1">
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(lead)} className="h-8 w-8 hover:bg-secondary" title="Edit"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></Button>
-                            <Button variant="ghost" size="icon" onClick={() => { setLeadToDelete(lead); setDeleteDialogOpen(true); }} className="h-8 w-8 hover:bg-destructive/10" title="Delete"><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>
+                            {lead.user_id === user?.id && (
+                              <Button variant="ghost" size="icon" onClick={() => { setLeadToDelete(lead); setDeleteDialogOpen(true); }} className="h-8 w-8 hover:bg-destructive/10" title="Delete"><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -579,9 +581,13 @@ export default function Leads({
             <form onSubmit={handleUpdate} className="space-y-6 max-w-3xl">
               {renderFormFields(editForm, setEditForm)}
               <div className="flex items-center justify-between pt-2">
-                <Button type="button" variant="destructive" onClick={() => { if (editingLead) { setLeadToDelete(editingLead); setDeleteDialogOpen(true); } }} className="h-9 text-[13px] gap-2">
-                  <Trash2 className="h-3.5 w-3.5" /> Delete lead
-                </Button>
+                {editingLead?.user_id === user?.id ? (
+                  <Button type="button" variant="destructive" onClick={() => { if (editingLead) { setLeadToDelete(editingLead); setDeleteDialogOpen(true); } }} className="h-9 text-[13px] gap-2">
+                    <Trash2 className="h-3.5 w-3.5" /> Delete lead
+                  </Button>
+                ) : (
+                  <div />
+                )}
                 <div className="flex items-center gap-3">
                   <Button type="button" variant="ghost" onClick={() => setView("list")} className="h-9 text-[13px]">Cancel</Button>
                   <Button type="submit" disabled={saving} className="h-9 text-[13px] gap-2">

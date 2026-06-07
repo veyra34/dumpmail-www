@@ -806,8 +806,23 @@ export async function updateLead<T>(id: string, input: CreateLeadInput) {
   return data as T;
 }
 
-export async function deleteLead(id: string) {
+export async function deleteLead(userId: string, id: string) {
   const supabase = createServerSupabase();
+  await ensurePublicUserForClient(supabase, userId);
+
+  const { data: lead, error: fetchError } = await supabase
+    .from("leads")
+    .select("user_id")
+    .eq("id", id)
+    .single();
+
+  if (fetchError) throw fetchError;
+  if (!lead) throw new Error("Lead not found");
+
+  if (lead.user_id !== userId) {
+    throw new Error("You are not authorized to delete this lead as you are not the owner.");
+  }
+
   const { error } = await supabase.from("leads").delete().eq("id", id);
   if (error) throw error;
   return true;
