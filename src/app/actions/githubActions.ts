@@ -3,6 +3,7 @@
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 import { blake2b } from "@noble/hashes/blake2.js";
+import { Octokit } from "octokit";
 
 const { decodeUTF8, decodeBase64, encodeBase64 } = naclUtil;
 
@@ -88,32 +89,22 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Call the GitHub REST API with the user's provider token. */
-async function ghFetch(
-  path: string,
-  token: string,
-  options: RequestInit = {},
-): Promise<Response> {
-  return fetch(`https://api.github.com${path}`, {
-    ...options,
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
+/** Create an Octokit instance configured with the auth token. */
+function getOctokit(token: string): Octokit {
+  return new Octokit({
+    auth: token,
+    request: {
+      headers: {
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     },
   });
 }
 
 /** Get the authenticated user's GitHub login from the token. */
 async function getGitHubLogin(token: string): Promise<string> {
-  const res = await ghFetch("/user", token);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Failed to get GitHub user: ${res.status} — ${body}`);
-  }
-  const data = (await res.json()) as { login: string };
+  const octokit = getOctokit(token);
+  const { data } = await octokit.rest.users.getAuthenticated();
   return data.login;
 }
 
@@ -125,21 +116,19 @@ async function forkRepoInternal(token: string): Promise<void> {
     );
   }
 
-  const res = await ghFetch(
-    `/repos/${SOURCE_OWNER}/${SOURCE_REPO}/forks`,
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify({ default_branch_only: false }),
-    },
-  );
-
-  // 202 = fork accepted (async), 422 = already forked — both are fine.
-  if (!res.ok && res.status !== 202 && res.status !== 422) {
-    const body = await res.text();
-    throw new Error(`Fork request failed: ${res.status} — ${body}`);
+  const octokit = getOctokit(token);
+  try {
+    await octokit.rest.repos.createFork({
+      owner: SOURCE_OWNER,
+      repo: SOURCE_REPO,
+      default_branch_only: false,
+    });
+  } catch (err: any) {
+    // 202 = fork accepted (async), 422 = already forked — both are fine.
+    if (err.status !== 202 && err.status !== 422) {
+      throw new Error(`Fork request failed: ${err.status} — ${err.message}`);
+    }
   }
-  // GitHub returns 202 Accepted — the fork is created asynchronously.
 }
 
 /** Poll until the forked repo is accessible (up to maxWaitMs). */
@@ -149,9 +138,17 @@ async function waitForFork(
   maxWaitMs = 30_000,
 ): Promise<void> {
   const start = Date.now();
+  const octokit = getOctokit(token);
   while (Date.now() - start < maxWaitMs) {
-    const res = await ghFetch(`/repos/${login}/${SOURCE_REPO}`, token);
-    if (res.ok) return;
+    try {
+      await octokit.rest.repos.get({
+        owner: login,
+        repo: SOURCE_REPO,
+      });
+      return;
+    } catch {
+      // Ignore error and try again (repo not ready yet)
+    }
     await sleep(2_000);
   }
   throw new Error(
@@ -164,15 +161,15 @@ async function getRepoPublicKey(
   token: string,
   login: string,
 ): Promise<GitHubPublicKey> {
-  const res = await ghFetch(
-    `/repos/${login}/${SOURCE_REPO}/actions/secrets/public-key`,
-    token,
-  );
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Failed to get public key: ${res.status} — ${body}`);
-  }
-  return res.json() as Promise<GitHubPublicKey>;
+  const octokit = getOctokit(token);
+  const { data } = await octokit.rest.actions.getRepoPublicKey({
+    owner: login,
+    repo: SOURCE_REPO,
+  });
+  return {
+    key_id: data.key_id,
+    key: data.key,
+  };
 }
 
 /** Create or update a single Actions secret on the forked repo. */
@@ -185,23 +182,14 @@ async function putSecret(
   encryptedValue: string,
 ): Promise<void> {
   void secretValue; // value already encrypted externally
-  const res = await ghFetch(
-    `/repos/${login}/${SOURCE_REPO}/actions/secrets/${secretName}`,
-    token,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        encrypted_value: encryptedValue,
-        key_id: keyId,
-      }),
-    },
-  );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(
-      `Failed to set secret ${secretName}: ${res.status} — ${body}`,
-    );
-  }
+  const octokit = getOctokit(token);
+  await octokit.rest.actions.createOrUpdateRepoSecret({
+    owner: login,
+    repo: SOURCE_REPO,
+    secret_name: secretName,
+    encrypted_value: encryptedValue,
+    key_id: keyId,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +297,142 @@ export async function injectSecretsStep(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[injectSecretsStep]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** Get the status of the scheduler workflow. */
+export async function getWorkflowStatus(
+  githubToken: string,
+): Promise<{ ok: true; state: string } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    const octokit = getOctokit(githubToken);
+    const { data } = await octokit.rest.actions.getWorkflow({
+      owner: login,
+      repo: SOURCE_REPO,
+      workflow_id: "schedule-send-mails.yml",
+    });
+    return { ok: true, state: data.state };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[getWorkflowStatus]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** Enable or disable the scheduler workflow. */
+export async function toggleWorkflow(
+  githubToken: string,
+  enable: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    const octokit = getOctokit(githubToken);
+    if (enable) {
+      await octokit.rest.actions.enableWorkflow({
+        owner: login,
+        repo: SOURCE_REPO,
+        workflow_id: "schedule-send-mails.yml",
+      });
+    } else {
+      await octokit.rest.actions.disableWorkflow({
+        owner: login,
+        repo: SOURCE_REPO,
+        workflow_id: "schedule-send-mails.yml",
+      });
+    }
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[toggleWorkflow]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** List runs for the scheduler workflow with pagination. */
+export async function listWorkflowRuns(
+  githubToken: string,
+  page = 1,
+  perPage = 5,
+): Promise<{ ok: true; runs: any[]; totalCount: number } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    const octokit = getOctokit(githubToken);
+    const { data } = await octokit.rest.actions.listWorkflowRuns({
+      owner: login,
+      repo: SOURCE_REPO,
+      workflow_id: "schedule-send-mails.yml",
+      page,
+      per_page: perPage,
+    });
+    return {
+      ok: true,
+      runs: data.workflow_runs,
+      totalCount: data.total_count,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[listWorkflowRuns]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** Get details of a specific workflow run, including jobs and steps. */
+export async function getWorkflowRunDetails(
+  githubToken: string,
+  runId: number,
+): Promise<{ ok: true; run: any; jobs: any[] } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    const octokit = getOctokit(githubToken);
+    
+    const [runRes, jobsRes] = await Promise.all([
+      octokit.rest.actions.getWorkflowRun({
+        owner: login,
+        repo: SOURCE_REPO,
+        run_id: runId,
+      }),
+      octokit.rest.actions.listJobsForWorkflowRun({
+        owner: login,
+        repo: SOURCE_REPO,
+        run_id: runId,
+      }),
+    ]);
+    
+    return {
+      ok: true,
+      run: runRes.data,
+      jobs: jobsRes.data.jobs,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[getWorkflowRunDetails]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** Get workflow billable usage statistics. */
+export async function getWorkflowUsageStats(
+  githubToken: string,
+): Promise<{ ok: true; usage: any } | { ok: false; error: string }> {
+  try {
+    if (!githubToken) throw new Error("No GitHub provider token available");
+    const login = await getGitHubLogin(githubToken);
+    const octokit = getOctokit(githubToken);
+    const { data } = await octokit.rest.actions.getWorkflowUsage({
+      owner: login,
+      repo: SOURCE_REPO,
+      workflow_id: "schedule-send-mails.yml",
+    });
+    return { ok: true, usage: data };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[getWorkflowUsageStats]", message);
     return { ok: false, error: message };
   }
 }

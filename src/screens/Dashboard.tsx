@@ -3,6 +3,7 @@ import { Send, Users, FileText, Mailbox, Activity } from "lucide-react";
 import Link from "next/link";
 import { fetchDashboardStats } from "@/app/actions/admin-actions";
 import { cookies } from "next/headers";
+import WorkflowManager from "@/components/WorkflowManager";
 import { redirect } from "next/navigation";
 
 type Stats = { campaigns: number; leads: number; templates: number; senders: number; events: number };
@@ -48,10 +49,26 @@ export default async function Dashboard() {
           ))}
         </div>
 
-        <div className="mt-10 rounded-md border border-dashed border-border p-8 text-center">
-          <p className="text-[13px] text-muted-foreground">
-            Empty workspace — start by adding a sender account, then create a template and a campaign.
-          </p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+          <div className="lg:col-span-2 space-y-6">
+            <WorkflowManager />
+          </div>
+          <div className="space-y-6">
+            {stats.campaigns === 0 && stats.leads === 0 && stats.templates === 0 && stats.senders === 0 ? (
+              <div className="rounded-md border border-dashed border-border p-6 text-center bg-card h-full flex flex-col items-center justify-center min-h-[200px]">
+                <p className="text-[13px] text-muted-foreground">
+                  Empty workspace — start by adding a sender account, then create a template and a campaign.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-md border border-border p-6 bg-card">
+                <h3 className="text-sm font-semibold mb-2">Outreach Tips</h3>
+                <p className="text-[12px] text-muted-foreground leading-relaxed">
+                  Make sure your email sender is fully connected. Build structured template sequences and add high-quality leads to launch campaigns.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </AppLayout>
