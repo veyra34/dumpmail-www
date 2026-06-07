@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dumpmail
 
-## Getting Started
+Dumpmail is an open-source email automation platform designed to run entirely on free cron job services, such as GitHub Actions or GitLab CI/CD. The platform offers direct flexibility in where and how data is managed, ensuring total control over your campaign details.
 
-First, run the development server:
+## Deployment Options
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Hosted Dashboard
+You can use the platform at [dumpmail.vercel.app](https://dumpmail.vercel.app). When using the hosted version, you can:
+- **Choose your database**: Store leads, templates, and logs on Dumpmail's database or connect your own database.
+- **Control data privacy**: Mark your data as private, or configure it globally/publicly.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Self-Hosted Dashboard
+If you want to run your own server to interface with the `dumpmail-fork` script:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Anas-github-acc/dumpmail-www.git
+   cd dumpmail-www
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. **Configure environment variables**:
+   Copy the example environment configuration file and update the variables with your own credentials (e.g., Supabase project credentials and GitHub credentials):
+   ```bash
+   cp .env.example .env.local
+   ```
 
-## Learn More
+3. **Install dependencies**:
+   ```bash
+   pnpm install
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+4. **Run the development server**:
+   ```bash
+   pnpm dev
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Features
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Free cron automation**: Run outreach sequences using native free runners like GitHub Actions or GitLab CI/CD to handle execution schedules.
+- **Flexible database hosting**: Use the built-in database with customizable privacy rules or link your own external database.
+- **Granular privacy**: Toggle campaign data, template libraries, and lead lists between private storage and shared global pools.
+- **Decentralized execution**: Interacts with the `dumpmail-fork` execution engine directly inside your personal repository.
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This project is licensed under the MIT License.

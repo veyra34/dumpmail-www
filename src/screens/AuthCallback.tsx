@@ -63,7 +63,7 @@ export default function AuthCallback({
         const result = await persistUserFromAccessToken(accessToken);
         if (!result) throw new Error("something went wrong.. when accessing user. Please raise the issue on https://github.com/Anas-github-acc/dumpmail-www/issues")
 
-        document.cookie = `postfork_user_id=${result.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+        document.cookie = `dumpmail_user_id=${result.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
 
         setUserId(result.user.id);
         console.log("isNewUser =", result.isNewUser);

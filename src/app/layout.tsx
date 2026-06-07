@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Postfork",
+  title: "Dumpmail",
   description: "Open-source email automation that runs in your GitHub.",
 };
 

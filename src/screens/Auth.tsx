@@ -47,7 +47,7 @@ export default function Auth() {
         <div className="flex flex-col items-start gap-3">
           <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <StackedLogo size={16} />
-            <span className="text-[14px] font-bold text-foreground tracking-[0.08em] uppercase">Postfork</span>
+            <span className="text-[14px] font-bold text-foreground tracking-[0.08em] uppercase">Dumpmail</span>
           </Link>
           <p className="text-[13px] text-muted-foreground">Sign in to manage campaigns, leads, and sender health</p>
         </div>
@@ -70,7 +70,7 @@ export default function Auth() {
 
 
         <p className="text-left text-[11px] text-muted-foreground pt-2">
-          © {new Date().getFullYear()} Postfork
+          © {new Date().getFullYear()} Dumpmail
         </p>
       </div>
     </div>

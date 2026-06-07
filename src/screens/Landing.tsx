@@ -20,7 +20,7 @@ const Landing = () => {
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <StackedLogo size={16} />
-            <span className="font-bold uppercase tracking-[0.08em] text-[14px]">Postfork</span>
+            <span className="font-bold uppercase tracking-[0.08em] text-[14px]">Dumpmail</span>
           </Link>
           <div className="flex items-center gap-2">
             <a
@@ -73,7 +73,7 @@ const Landing = () => {
               </div>
               <pre className="p-4 text-[12.5px] font-mono leading-relaxed text-foreground">
 {`# 1. Sign in with GitHub
-# 2. We fork postfork/engine → your account
+# 2. We fork dumpmail/engine → your account
 # 3. Add SMTP + leads in the dashboard
 # 4. GitHub Actions handles the rest`}
               </pre>
@@ -86,7 +86,7 @@ const Landing = () => {
       <section id="how" className="border-t border-border bg-secondary/30">
         <div className="max-w-6xl mx-auto px-6 py-20">
           <div className="max-w-2xl mb-12">
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-3">Why Postfork</p>
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-3">Why Dumpmail</p>
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight">
               Cold outreach without the SaaS tax.
             </h2>
@@ -120,7 +120,7 @@ const Landing = () => {
 
       <footer className="border-t border-border">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>© {new Date().getFullYear()} Postfork</span>
+          <span>© {new Date().getFullYear()} Dumpmail</span>
           <span>MIT License</span>
         </div>
       </footer>

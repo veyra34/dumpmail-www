@@ -88,7 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (event === "SIGNED_OUT") {
           clearAuthState();
           setLoading(false);
-          document.cookie = "postfork_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
+          document.cookie = "dumpmail_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
           window.location.replace("/");
           return;
         }
@@ -98,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          document.cookie = `postfork_user_id=${session.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+          document.cookie = `dumpmail_user_id=${session.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
           // Revalidate in the background — don't block loading on this.
           const userId = session.user.id;
           void revalidateSession().then((verifiedUser) => {
@@ -106,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         } else {
           setProfile(null);
-          document.cookie = "postfork_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
+          document.cookie = "dumpmail_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
         }
 
         setLoading(false);
@@ -119,21 +119,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        document.cookie = `postfork_user_id=${session.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+        document.cookie = `dumpmail_user_id=${session.user.id}; path=/; max-age=31536000; SameSite=Lax; Secure`;
         // Revalidate + fetch profile in the background.
         const userId = session.user.id;
         void revalidateSession().then((verifiedUser) => {
           if (verifiedUser) void fetchProfileData(userId);
         });
       } else {
-        document.cookie = "postfork_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
+        document.cookie = "dumpmail_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
       }
       setLoading(false);
     }).catch(() => {
       // If getSession() rejects (bad env vars, network error, etc.),
       // we must still clear the loading state or the spinner hangs forever.
       clearAuthState();
-      document.cookie = "postfork_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
+      document.cookie = "dumpmail_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
       setLoading(false);
     });
 
@@ -173,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
-    document.cookie = "postfork_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
+    document.cookie = "dumpmail_user_id=; path=/; max-age=0; SameSite=Lax; Secure";
     if (error) throw error;
   };
 

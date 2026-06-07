@@ -8,7 +8,7 @@ type Template = Tables<"email_templates">;
 
 export default async function Page() {
   const cookieStore = await cookies();
-  const userId = cookieStore.get("postfork_user_id")?.value;
+  const userId = cookieStore.get("dumpmail_user_id")?.value;
   if (!userId) {
     redirect("/");
   }

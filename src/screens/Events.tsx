@@ -38,7 +38,7 @@ function formatDate(value: string | null | undefined) {
 
 export default async function Events() {
   const cookieStore = await cookies();
-  const userId = cookieStore.get("postfork_user_id")?.value;
+  const userId = cookieStore.get("dumpmail_user_id")?.value;
   if (!userId) {
     redirect("/");
   }
