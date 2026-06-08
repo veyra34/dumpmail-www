@@ -36,10 +36,17 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
-export default function WorkflowManager() {
-  const { user } = useAuth();
-  const userId = user?.id ?? null;
-  const installationId = user?.user_metadata?.github_installation_id ?? null;
+interface WorkflowManagerProps {
+  userId: string;
+  installationId: string | null;
+  repoPermissionError: boolean;
+}
+
+export default function WorkflowManager({
+  userId,
+  installationId,
+  repoPermissionError,
+}: WorkflowManagerProps) {
 
   // Workflow State
   const [workflowState, setWorkflowState] = useState<string | null>(null);
@@ -179,6 +186,30 @@ export default function WorkflowManager() {
           <Button asChild size="sm" className="h-8 text-[12px]">
             <a href={installUrl} target="_blank" rel="noopener noreferrer">
               Install GitHub App
+            </a>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (repoPermissionError) {
+    const editUrl = `https://github.com/settings/installations/${installationId}`;
+    const forkedRepoName = repoInfo ? `${repoInfo.owner}/${repoInfo.repo}` : "your-forked-repo";
+
+    return (
+      <Card className="border border-destructive/40 bg-destructive/5 backdrop-blur-md shadow-lg">
+        <CardContent className="pt-6 pb-6 flex flex-col items-center justify-center text-center space-y-4">
+          <AlertCircle className="h-8 w-8 text-destructive animate-pulse" />
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-destructive">Action Required: Repository Permission Needed</h3>
+            <p className="text-[12px] text-muted-foreground max-w-sm">
+              The GitHub App was successfully installed, but it needs access to your forked repository: <span className="font-mono font-semibold text-foreground">{forkedRepoName}</span>.
+            </p>
+          </div>
+          <Button asChild size="sm" variant="destructive" className="h-8 text-[12px] font-semibold">
+            <a href={editUrl} target="_blank" rel="noopener noreferrer">
+              Configure App Permissions
             </a>
           </Button>
         </CardContent>

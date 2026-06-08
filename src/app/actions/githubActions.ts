@@ -6,6 +6,7 @@ import { blake2b } from "@noble/hashes/blake2.js";
 import { Octokit } from "octokit";
 import crypto from "crypto";
 import createServerSupabase from "@/integrations/supabase/server";
+import { cookies } from "next/headers";
 
 const { decodeUTF8, decodeBase64, encodeBase64 } = naclUtil;
 
@@ -563,6 +564,106 @@ export async function getRepoInfo(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[getRepoInfo]", message);
+    return { ok: false, error: message };
+  }
+}
+
+/** Verify user repository selection for GitHub App installation and save. */
+export async function verifyAndSaveInstallation(
+  supabaseUserId: string,
+  installationId: string,
+): Promise<{ ok: true; matched: boolean; repositoryId: string | null } | { ok: false; error: string }> {
+  try {
+    if (!supabaseUserId) throw new Error("No user ID provided");
+    if (!installationId) throw new Error("No installation ID provided");
+
+    // Clear the OAuth cookie if present (we don't need it anymore)
+    try {
+      const cookieStore = await cookies();
+      cookieStore.set("github_oauth_token", "", { maxAge: 0, path: "/" });
+    } catch {}
+
+    // Generate an installation access token using our GitHub App JWT
+    const installationToken = await getInstallationAccessToken(installationId);
+
+    // Call GitHub to see which repositories this installation has access to
+    const res = await fetch("https://api.github.com/installation/repositories", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${installationToken}`,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Dumpmail-App",
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`GitHub API error (installation/repositories): ${res.status} - ${errorText}`);
+    }
+
+    const payload = await res.json();
+    const repositories = payload.repositories || [];
+
+    const upstreamFullName = `${SOURCE_OWNER}/${SOURCE_REPO}`.toLowerCase();
+    let matchedRepo: any = null;
+
+    for (const repo of repositories) {
+      if (repo.fork === true) {
+        // Retrieve full repository details to inspect "parent" and "source"
+        const repoDetailRes = await fetch(`https://api.github.com/repos/${repo.full_name}`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${installationToken}`,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "Dumpmail-App",
+          },
+          cache: "no-store",
+        });
+
+        if (repoDetailRes.ok) {
+          const fullRepo = await repoDetailRes.json();
+          const parentName = fullRepo.parent?.full_name?.toLowerCase() || "";
+          const sourceName = fullRepo.source?.full_name?.toLowerCase() || "";
+
+          if (parentName === upstreamFullName || sourceName === upstreamFullName) {
+            matchedRepo = repo;
+            break;
+          }
+        }
+      }
+    }
+
+    const supabase = createServerSupabase();
+
+    if (matchedRepo) {
+      // Save repository_id alongside installation_id in database user metadata
+      const { error } = await supabase.auth.admin.updateUserById(supabaseUserId, {
+        user_metadata: {
+          github_installation_id: installationId,
+          github_repository_id: matchedRepo.id.toString(),
+          github_repo_permission_error: false,
+        }
+      });
+      if (error) throw error;
+      return { ok: true, matched: true, repositoryId: matchedRepo.id.toString() };
+    } else {
+      // Save installation_id but flag that the required repository was not found/selected
+      const { error } = await supabase.auth.admin.updateUserById(supabaseUserId, {
+        user_metadata: {
+          github_installation_id: installationId,
+          github_repository_id: null,
+          github_repo_permission_error: true,
+        }
+      });
+      if (error) throw error;
+      return { ok: true, matched: false, repositoryId: null };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[verifyAndSaveInstallation]", message);
     return { ok: false, error: message };
   }
 }

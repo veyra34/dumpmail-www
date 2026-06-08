@@ -1,10 +1,11 @@
 import { AppLayout } from "@/components/AppLayout";
-import { Send, Users, FileText, Mailbox, Activity } from "lucide-react";
+import { Send, Users, FileText, Mailbox, Activity, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { fetchDashboardStats } from "@/app/actions/admin-actions";
 import { cookies } from "next/headers";
 import WorkflowManager from "@/components/WorkflowManager";
 import { redirect } from "next/navigation";
+import createServerSupabase from "@/integrations/supabase/server";
 
 type Stats = { campaigns: number; leads: number; templates: number; senders: number; events: number };
 
@@ -23,11 +24,49 @@ export default async function Dashboard() {
     redirect("/");
   }
 
+  const supabase = createServerSupabase();
+  const { data: userData } = await supabase.auth.admin.getUserById(userId);
+  const userMetadata = userData?.user?.user_metadata;
+  const repoPermissionError = userMetadata?.github_repo_permission_error === true;
+  const installationId = userMetadata?.github_installation_id ?? null;
+
   const stats = await fetchDashboardStats(userId);
+
+  // Dynamically resolve repository name for the permission alert message
+  let forkedRepoName = "your forked repository";
+  if (repoPermissionError) {
+    const { getRepoInfo } = await import("@/app/actions/githubActions");
+    const repoInfoRes = await getRepoInfo(userId);
+    if (repoInfoRes.ok) {
+      forkedRepoName = `${repoInfoRes.owner}/${repoInfoRes.repo}`;
+    }
+  }
 
   return (
     <AppLayout>
       <div className="max-w-[100rem] mx-auto p-6 md:p-8 space-y-6">
+        {repoPermissionError && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex gap-3 items-start">
+              <AlertCircle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
+              <div>
+                <h5 className="font-semibold text-destructive text-sm">Action Required</h5>
+                <p className="text-[12px] text-muted-foreground mt-0.5">
+                  GitHub App requires <span className="font-semibold text-foreground">"{forkedRepoName}"</span> permission.
+                </p>
+              </div>
+            </div>
+            <a 
+              href={`https://github.com/settings/installations/${userMetadata?.github_installation_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] font-semibold text-destructive hover:underline flex-shrink-0"
+            >
+              Configure App Permissions &rarr;
+            </a>
+          </div>
+        )}
+
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-[13px] text-muted-foreground mt-1">Overview of your outreach.</p>
@@ -51,7 +90,11 @@ export default async function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
           <div className="lg:col-span-2 space-y-6">
-            <WorkflowManager />
+            <WorkflowManager 
+              userId={userId} 
+              installationId={installationId} 
+              repoPermissionError={repoPermissionError} 
+            />
           </div>
           <div className="space-y-6">
             {stats.campaigns === 0 && stats.leads === 0 && stats.templates === 0 && stats.senders === 0 ? (

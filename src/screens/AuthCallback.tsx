@@ -75,6 +75,9 @@ export default function AuthCallback({
           return;
         }
 
+        // Set short-lived secure cookie with GitHub OAuth provider token (useful for backend validation)
+        document.cookie = `github_oauth_token=${providerToken}; path=/; max-age=600; SameSite=Lax; Secure`;
+
         // Step 2 — fork
         mark("forking", "active");
 
@@ -110,9 +113,8 @@ export default function AuthCallback({
           if (hasInstallation) {
             router.replace("/dashboard");
           } else {
-            const githubAppName = process.env.NEXT_PUBLIC_GITHUB_APP_NAME || "dumpmail-app";
-            const installUrl = `https://github.com/apps/${githubAppName}/installations/new?state=${user.id}`;
-            window.location.assign(installUrl);
+            const repoFullName = `${forkResult.login}/${sourceRepo}`;
+            router.replace(`/github/install?repo=${encodeURIComponent(repoFullName)}`);
           }
         }
       } catch (err) {
