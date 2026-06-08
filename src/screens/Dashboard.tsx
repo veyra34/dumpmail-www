@@ -27,8 +27,22 @@ export default async function Dashboard() {
   const supabase = createServerSupabase();
   const { data: userData } = await supabase.auth.admin.getUserById(userId);
   const userMetadata = userData?.user?.user_metadata;
-  const repoPermissionError = userMetadata?.github_repo_permission_error === true;
+  let repoPermissionError = userMetadata?.github_repo_permission_error === true;
   const installationId = userMetadata?.github_installation_id ?? null;
+  const repositoryId = userMetadata?.github_repository_id ?? null;
+
+  // Auto-verify repository selection on page load/refresh if:
+  // 1. There is a repository permission error flagged, OR
+  // 2. The app is installed (installationId exists) but no repository has been matched/saved yet (repositoryId is null)
+  if (installationId && (repoPermissionError || !repositoryId)) {
+    const { verifyAndSaveInstallation } = await import("@/app/actions/githubActions");
+    const verifyRes = await verifyAndSaveInstallation(userId, installationId);
+    if (verifyRes.ok && verifyRes.matched) {
+      repoPermissionError = false;
+    } else {
+      repoPermissionError = true;
+    }
+  }
 
   const stats = await fetchDashboardStats(userId);
 

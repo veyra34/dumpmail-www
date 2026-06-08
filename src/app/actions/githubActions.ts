@@ -143,7 +143,32 @@ async function getGitHubAppClient(
     throw new Error("Action Required: Repository Permission Needed");
   }
 
-  const token = await getInstallationAccessToken(String(installationId));
+  let token = "";
+  try {
+    token = await getInstallationAccessToken(String(installationId));
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg.includes("404")) {
+      console.warn(`[getGitHubAppClient] Installation ${installationId} returned 404. Cleaning up user metadata.`);
+      try {
+        const currentMeta = data.user.user_metadata || {};
+        await supabase.auth.admin.updateUserById(supabaseUserId, {
+          user_metadata: {
+            ...currentMeta,
+            github_installation_id: null,
+            github_repository_id: null,
+            github_repository_name: null,
+            github_repository_owner: null,
+            github_repo_permission_error: false,
+          }
+        });
+      } catch (dbErr) {
+        console.error("[getGitHubAppClient] Failed to clean up user metadata:", dbErr);
+      }
+      throw new Error("GitHub App uninstalled");
+    }
+    throw err;
+  }
 
   // If repoName or repoOwner is missing but repositoryId is present, resolve from GitHub
   if (repositoryId && (!repoName || !repoOwner)) {
@@ -188,27 +213,46 @@ async function getGitHubAppClient(
   return { token, owner: repoOwner, repo: repoName };
 }
 
-/** Handles GitHub API errors and updates user metadata if a permission error occurs. Returns true if it was a permission error (403/404). */
+/** Handles GitHub API errors and updates user metadata if a permission error occurs. Returns true if it was a repository permission error. */
 async function handleGitHubError(supabaseUserId: string, err: any): Promise<boolean> {
   const status = err?.status || err?.response?.status;
-  if (status === 403 || status === 404) {
-    console.warn(`[handleGitHubError] GitHub API returned ${status}. Setting repo permission error flag.`);
+  const errMsg = err instanceof Error ? err.message : String(err);
+  const isResourceNotAccessible = errMsg.toLowerCase().includes("resource not accessible by integration");
+
+  if (status === 403 || status === 404 || isResourceNotAccessible) {
     try {
-      const supabase = createServerSupabase();
-      const { data: userData } = await supabase.auth.admin.getUserById(supabaseUserId);
-      if (userData?.user) {
-        const currentMeta = userData.user.user_metadata || {};
-        await supabase.auth.admin.updateUserById(supabaseUserId, {
-          user_metadata: {
-            ...currentMeta,
-            github_repo_permission_error: true,
-          }
-        });
+      const { token, owner, repo } = await getGitHubAppClient(supabaseUserId, true);
+      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "Dumpmail-App",
+        },
+        cache: "no-store",
+      });
+      
+      if (!repoRes.ok || isResourceNotAccessible) {
+        console.warn(`[handleGitHubError] Repository ${owner}/${repo} itself is inaccessible (${repoRes.status}) or resource not accessible. Setting repo permission error flag.`);
+        const supabase = createServerSupabase();
+        const { data: userData } = await supabase.auth.admin.getUserById(supabaseUserId);
+        if (userData?.user) {
+          const currentMeta = userData.user.user_metadata || {};
+          await supabase.auth.admin.updateUserById(supabaseUserId, {
+            user_metadata: {
+              ...currentMeta,
+              github_repo_permission_error: true,
+            }
+          });
+        }
+        return true;
+      } else {
+        console.log(`[handleGitHubError] Repository ${owner}/${repo} is accessible. This is a workflow-level issue (actions disabled or missing file).`);
       }
-    } catch (dbErr) {
-      console.error("[handleGitHubError] Failed to update user metadata:", dbErr);
+    } catch (checkErr) {
+      console.error("[handleGitHubError] Error checking repository access:", checkErr);
     }
-    return true;
   }
   return false;
 }
@@ -667,95 +711,128 @@ export async function verifyAndSaveInstallation(
 
     // Generate an installation access token using our GitHub App JWT
     const installationToken = await getInstallationAccessToken(installationId);
-
-    // Call GitHub to see which repositories this installation has access to
-    const res = await fetch("https://api.github.com/installation/repositories", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${installationToken}`,
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "Dumpmail-App",
-      },
-      cache: "no-store",
-    });
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`GitHub API error (installation/repositories): ${res.status} - ${errorText}`);
-    }
-
-    const payload = await res.json();
-    const repositories = payload.repositories || [];
+    const login = await getInstallationOwner(installationId);
 
     const upstreamFullName = `${SOURCE_OWNER}/${SOURCE_REPO}`.toLowerCase();
     let matchedRepo: any = null;
 
     console.log("[verifyAndSaveInstallation] Starting repository verification.");
     console.log(`[verifyAndSaveInstallation] Upstream repo: ${upstreamFullName}`);
-    console.log(`[verifyAndSaveInstallation] Selected repos in installation (${repositories.length}):`, repositories.map((r: any) => ({
-      full_name: r.full_name,
-      name: r.name,
-      fork: r.fork,
-      id: r.id
-    })));
 
-    for (const repo of repositories) {
-      console.log(`[verifyAndSaveInstallation] Inspecting repository: ${repo.full_name} (fork: ${repo.fork})`);
-      if (repo.fork === true) {
-        // Retrieve full repository details to inspect "parent" and "source"
-        const repoDetailUrl = `https://api.github.com/repos/${repo.full_name}`;
-        console.log(`[verifyAndSaveInstallation] Fetching repository details from: ${repoDetailUrl}`);
-        const repoDetailRes = await fetch(repoDetailUrl, {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${installationToken}`,
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "Dumpmail-App",
-          },
-          cache: "no-store",
-        });
+    // Step 1: Direct check using installation owner and SOURCE_REPO name
+    const directRepoUrl = `https://api.github.com/repos/${login}/${SOURCE_REPO}`;
+    console.log(`[verifyAndSaveInstallation] Step 1: Trying direct check on: ${directRepoUrl}`);
+    try {
+      const directRes = await fetch(directRepoUrl, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${installationToken}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "Dumpmail-App",
+        },
+        cache: "no-store",
+      });
 
-        console.log(`[verifyAndSaveInstallation] Details response status: ${repoDetailRes.status}`);
-        if (repoDetailRes.ok) {
-          const fullRepo = await repoDetailRes.json();
-          const parentName = fullRepo.parent?.full_name?.toLowerCase() || "";
-          const sourceName = fullRepo.source?.full_name?.toLowerCase() || "";
-          console.log(`[verifyAndSaveInstallation] Repository: ${repo.full_name} | Parent: ${parentName} | Source: ${sourceName}`);
+      if (directRes.ok) {
+        const fullRepo = await directRes.json();
+        console.log(`[verifyAndSaveInstallation] Direct check succeeded. Fork: ${fullRepo.fork}`);
+        const parentName = fullRepo.parent?.full_name?.toLowerCase() || "";
+        const sourceName = fullRepo.source?.full_name?.toLowerCase() || "";
+        
+        const isForkMatch = fullRepo.fork === true && (parentName === upstreamFullName || sourceName === upstreamFullName);
+        const isNameMatch = fullRepo.name?.toLowerCase() === SOURCE_REPO.toLowerCase();
 
-          if (parentName === upstreamFullName || sourceName === upstreamFullName) {
-            console.log(`[verifyAndSaveInstallation] Match found by parent/source check: ${repo.full_name}`);
-            matchedRepo = repo;
-            break;
-          } else {
-            console.log(`[verifyAndSaveInstallation] Parent/source did not match upstream.`);
-          }
-        } else {
-          const errText = await repoDetailRes.text();
-          console.warn(`[verifyAndSaveInstallation] Failed to fetch details for ${repo.full_name}: ${repoDetailRes.status} - ${errText}`);
+        if (isForkMatch || isNameMatch) {
+          console.log(`[verifyAndSaveInstallation] Match found via direct check: ${fullRepo.full_name}`);
+          matchedRepo = fullRepo;
         }
       } else {
-        console.log(`[verifyAndSaveInstallation] Skipping non-fork repository during primary check: ${repo.full_name}`);
+        console.log(`[verifyAndSaveInstallation] Direct check returned status: ${directRes.status}`);
       }
+    } catch (directErr) {
+      console.warn("[verifyAndSaveInstallation] Direct check failed:", directErr);
     }
 
-    // Fallback: Check if any repository name matches the target SOURCE_REPO name
+    // Step 2: Fallback to listing installation repositories if direct check did not match
     if (!matchedRepo) {
-      console.log(`[verifyAndSaveInstallation] No fork match found by parent/source. Trying fallback name match for: ${SOURCE_REPO}`);
-      for (const repo of repositories) {
-        if (repo.name?.toLowerCase() === SOURCE_REPO.toLowerCase()) {
-          console.log(`[verifyAndSaveInstallation] Match found by fallback name check: ${repo.full_name}`);
-          matchedRepo = repo;
-          break;
+      console.log("[verifyAndSaveInstallation] Step 2: Falling back to listing installation repositories...");
+      const res = await fetch("https://api.github.com/installation/repositories?per_page=100", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${installationToken}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "Dumpmail-App",
+        },
+        cache: "no-store",
+      });
+
+      if (res.ok) {
+        const payload = await res.json();
+        const repositories = payload.repositories || [];
+        console.log(`[verifyAndSaveInstallation] Selected repos in installation (${repositories.length}):`, repositories.map((r: any) => r.full_name));
+
+        for (const repo of repositories) {
+          console.log(`[verifyAndSaveInstallation] Inspecting repository: ${repo.full_name} (fork: ${repo.fork})`);
+          if (repo.fork === true) {
+            const repoDetailUrl = `https://api.github.com/repos/${repo.full_name}`;
+            console.log(`[verifyAndSaveInstallation] Fetching repository details from: ${repoDetailUrl}`);
+            const repoDetailRes = await fetch(repoDetailUrl, {
+              method: "GET",
+              headers: {
+                "Authorization": `Bearer ${installationToken}`,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "Dumpmail-App",
+              },
+              cache: "no-store",
+            });
+
+            console.log(`[verifyAndSaveInstallation] Details response status: ${repoDetailRes.status}`);
+            if (repoDetailRes.ok) {
+              const fullRepo = await repoDetailRes.json();
+              const parentName = fullRepo.parent?.full_name?.toLowerCase() || "";
+              const sourceName = fullRepo.source?.full_name?.toLowerCase() || "";
+              console.log(`[verifyAndSaveInstallation] Repository: ${repo.full_name} | Parent: ${parentName} | Source: ${sourceName}`);
+
+              if (parentName === upstreamFullName || sourceName === upstreamFullName) {
+                console.log(`[verifyAndSaveInstallation] Match found by parent/source check: ${repo.full_name}`);
+                matchedRepo = repo;
+                break;
+              } else {
+                console.log(`[verifyAndSaveInstallation] Parent/source did not match upstream.`);
+              }
+            } else {
+              const errText = await repoDetailRes.text();
+              console.warn(`[verifyAndSaveInstallation] Failed to fetch details for ${repo.full_name}: ${repoDetailRes.status} - ${errText}`);
+            }
+          } else {
+            console.log(`[verifyAndSaveInstallation] Skipping non-fork repository during primary check: ${repo.full_name}`);
+          }
         }
+
+        // Fallback: Check if any repository name matches the target SOURCE_REPO name
+        if (!matchedRepo) {
+          console.log(`[verifyAndSaveInstallation] No fork match found by parent/source. Trying fallback name match for: ${SOURCE_REPO}`);
+          for (const repo of repositories) {
+            if (repo.name?.toLowerCase() === SOURCE_REPO.toLowerCase()) {
+              console.log(`[verifyAndSaveInstallation] Match found by fallback name check: ${repo.full_name}`);
+              matchedRepo = repo;
+              break;
+            }
+          }
+        }
+      } else {
+        const errorText = await res.text();
+        throw new Error(`GitHub API error (installation/repositories): ${res.status} - ${errorText}`);
       }
     }
 
     if (matchedRepo) {
       console.log(`[verifyAndSaveInstallation] Successfully matched repository: ${matchedRepo.full_name} (ID: ${matchedRepo.id})`);
     } else {
-      console.error("[verifyAndSaveInstallation] Verification failed. No matching repository found in installation.");
+      console.warn("[verifyAndSaveInstallation] Verification failed. No matching repository found in installation.");
     }
 
     const supabase = createServerSupabase();
@@ -788,6 +865,28 @@ export async function verifyAndSaveInstallation(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[verifyAndSaveInstallation]", message);
+    if (message.includes("404")) {
+      try {
+        const supabase = createServerSupabase();
+        const { data: userData } = await supabase.auth.admin.getUserById(supabaseUserId);
+        if (userData?.user) {
+          const currentMeta = userData.user.user_metadata || {};
+          await supabase.auth.admin.updateUserById(supabaseUserId, {
+            user_metadata: {
+              ...currentMeta,
+              github_installation_id: null,
+              github_repository_id: null,
+              github_repository_name: null,
+              github_repository_owner: null,
+              github_repo_permission_error: false,
+            }
+          });
+        }
+      } catch (dbErr) {
+        console.error("[verifyAndSaveInstallation] Failed to clean up user metadata:", dbErr);
+      }
+      return { ok: false, error: "GitHub App uninstalled" };
+    }
     return { ok: false, error: message };
   }
 }

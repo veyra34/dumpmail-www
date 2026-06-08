@@ -92,8 +92,10 @@ export default function WorkflowManager({
     } else {
       if (res.error === "Action Required: Repository Permission Needed") {
         setLocalRepoPermissionError(true);
+      } else if (res.error === "GitHub App uninstalled") {
+        window.location.reload();
       } else {
-        console.error(res.error);
+        console.warn("[fetchStatus] Workflow status check failed:", res.error);
         setWorkflowError(res.error || "Failed to fetch workflow status");
       }
     }
@@ -110,6 +112,8 @@ export default function WorkflowManager({
     } else {
       if (res.error === "Action Required: Repository Permission Needed") {
         setLocalRepoPermissionError(true);
+      } else if (res.error === "GitHub App uninstalled") {
+        window.location.reload();
       } else {
         toast.error(`Failed to load workflow runs: ${res.error}`);
       }
@@ -146,7 +150,13 @@ export default function WorkflowManager({
       void fetchStatus();
       void fetchRuns(currentPage);
     } else {
-      toast.error(`Failed to update workflow: ${res.error}`);
+      if (res.error === "Action Required: Repository Permission Needed") {
+        setLocalRepoPermissionError(true);
+      } else if (res.error === "GitHub App uninstalled") {
+        window.location.reload();
+      } else {
+        toast.error(`Failed to update workflow: ${res.error}`);
+      }
     }
     setIsToggling(false);
   };
@@ -160,8 +170,15 @@ export default function WorkflowManager({
     if (res.ok) {
       setRunDetails({ run: res.run, jobs: res.jobs });
     } else {
-      toast.error(`Failed to load run details: ${res.error}`);
-      setIsDetailsOpen(false);
+      if (res.error === "Action Required: Repository Permission Needed") {
+        setLocalRepoPermissionError(true);
+        setIsDetailsOpen(false);
+      } else if (res.error === "GitHub App uninstalled") {
+        window.location.reload();
+      } else {
+        toast.error(`Failed to load run details: ${res.error}`);
+        setIsDetailsOpen(false);
+      }
     }
     setLoadingDetails(false);
   };
@@ -174,7 +191,13 @@ export default function WorkflowManager({
       setUsageStats(res.usage);
       setShowUsage(true);
     } else {
-      toast.error(`Failed to load usage stats: ${res.error}`);
+      if (res.error === "Action Required: Repository Permission Needed") {
+        setLocalRepoPermissionError(true);
+      } else if (res.error === "GitHub App uninstalled") {
+        window.location.reload();
+      } else {
+        toast.error(`Failed to load usage stats: ${res.error}`);
+      }
     }
     setLoadingUsage(false);
   };
