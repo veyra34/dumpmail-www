@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,10 +62,12 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   Edit,
   FileSpreadsheet,
   Globe,
+  Info,
   Loader2,
   Lock,
   PhoneCall,
@@ -79,6 +89,7 @@ import {
 } from "@/components/ui/pagination";
 
 type Lead = Tables<"leads">;
+type LeadWithCampaign = Lead & { in_campaign?: boolean };
 type Campaign = Tables<"campaigns">;
 
 const LAST_CAMPAIGN_KEY = "dumpmail_last_import_campaign";
@@ -193,16 +204,20 @@ export default function Leads({
   initialLeads,
   initialLeadsCount,
   initialCampaigns,
+  campaignIdFromUrl,
 }: {
-  initialLeads: Lead[];
+  initialLeads: LeadWithCampaign[];
   initialLeadsCount: number;
   initialCampaigns: Campaign[];
+  campaignIdFromUrl: string;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
-  const [leads, setLeads] = useState<Lead[]>(initialLeads);
+  const [leads, setLeads] = useState<LeadWithCampaign[]>(initialLeads);
   const [totalCount, setTotalCount] = useState<number>(initialLeadsCount);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const limit = 10;
@@ -212,25 +227,40 @@ export default function Leads({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync initial props to local states when they change
+  useEffect(() => {
+    setLeads(initialLeads);
+  }, [initialLeads]);
+
+  useEffect(() => {
+    setTotalCount(initialLeadsCount);
+  }, [initialLeadsCount]);
+
+  useEffect(() => {
+    setCampaigns(initialCampaigns);
+  }, [initialCampaigns]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [campaignIdFromUrl]);
+
   /* ── Campaign Lead Batching / Debounce States ── */
   type PendingLeadItem = {
     leadId: string;
     campaignId: string;
   };
 
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string>(() => {
-    if (initialCampaigns && initialCampaigns.length > 0) {
-      const oldest = [...initialCampaigns].sort((a, b) => {
-        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return dateA - dateB;
-      })[0];
-      return oldest?.id || "";
-    }
-    return "";
-  });
+  const selectedCampaignIdRef = useRef<string>(campaignIdFromUrl);
+  selectedCampaignIdRef.current = campaignIdFromUrl;
+
   const [queuedLeadIds, setQueuedLeadIds] = useState<string[]>([]);
   const [processingLeadIds, setProcessingLeadIds] = useState<string[]>([]);
+
+  const handleCampaignChange = (newCampaignId: string) => {
+    startTransition(() => {
+      router.push(`?campaign=${newCampaignId}`);
+    });
+  };
 
   const pendingLeadsRef = useRef<PendingLeadItem[]>([]);
 
@@ -272,6 +302,14 @@ export default function Leads({
               title: "Leads added",
               description: `Successfully added ${result.attachedCount} new lead(s) to campaign. (${result.alreadyAttachedCount} already in campaign).`,
             });
+            if (cid === selectedCampaignIdRef.current) {
+              setLeads((prevLeads) =>
+                prevLeads.map((l) =>
+                  leadsForCid.includes(l.id) ? { ...l, in_campaign: true } : l
+                )
+              );
+            }
+            router.refresh();
           } catch (err) {
             console.error(`[Debounce Log] Batch insert error for campaign ${cid}:`, err);
             toast({
@@ -285,11 +323,11 @@ export default function Leads({
           }
         }
       }, 1500),
-    [toast]
+    [toast, router]
   );
 
   const handleAddLeadToCampaign = (leadId: string) => {
-    if (!selectedCampaignId) {
+    if (!campaignIdFromUrl) {
       toast({
         title: "No campaign selected",
         description: "Please select a campaign first.",
@@ -302,10 +340,10 @@ export default function Leads({
     if (!isAlreadyQueued && !processingLeadIds.includes(leadId)) {
       pendingLeadsRef.current.push({
         leadId,
-        campaignId: selectedCampaignId,
+        campaignId: campaignIdFromUrl,
       });
       setQueuedLeadIds(pendingLeadsRef.current.map((item) => item.leadId));
-      console.log(`[Debounce Log] Clicked add for lead: ${leadId} (Campaign: ${selectedCampaignId}). Queue:`, pendingLeadsRef.current);
+      console.log(`[Debounce Log] Clicked add for lead: ${leadId} (Campaign: ${campaignIdFromUrl}). Queue:`, pendingLeadsRef.current);
       
       debouncedAddLeads();
     }
@@ -347,29 +385,19 @@ export default function Leads({
     setLoading(true);
     setError(null);
     try {
+      const currentCampaignId = campaignIdFromUrl || null;
       const [leadsRes, campaignsRes] = await Promise.all([
-        fetchLeads<Lead>(user.id, pageNumber, limit),
+        fetchLeads<Lead>(currentCampaignId, user.id, pageNumber, limit),
         fetchCampaigns<Campaign>(user.id),
       ]);
-      setLeads(leadsRes?.data ?? []);
+      
+      const leadsData = leadsRes?.data ?? [];
+      setLeads(leadsData);
       setTotalCount(leadsRes?.count ?? 0);
       setCurrentPage(pageNumber);
       
       const campaignData = campaignsRes?.data ?? [];
       setCampaigns(campaignData);
-
-      // Set default selected campaign if not already selected
-      if (campaignData.length > 0) {
-        setSelectedCampaignId((curr) => {
-          if (curr && campaignData.some((c) => c.id === curr)) return curr;
-          const oldest = [...campaignData].sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-            return dateA - dateB;
-          })[0];
-          return oldest?.id || "";
-        });
-      }
 
       // Restore last campaign from localStorage
       const stored = typeof window !== "undefined" ? localStorage.getItem(LAST_CAMPAIGN_KEY) : null;
@@ -642,12 +670,23 @@ export default function Leads({
                   <h2 className="text-[14px] font-semibold">Lead database</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-muted-foreground font-medium">Add to Campaign:</span>
+                  <TooltipProvider>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <span className="flex items-center justify-center cursor-pointer text-blue-500 hover:text-blue-600 transition-colors p-1 rounded-full hover:bg-blue-50 dark:hover:bg-blue-950/20">
+                          <Info className="h-4 w-4" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[260px] text-[12px] p-2.5">
+                        select the campaign and click on add button on the leads it will directly add these to your campaign selected here
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <select
-                    value={selectedCampaignId}
-                    onChange={(e) => setSelectedCampaignId(e.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 py-1 text-[12px] ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 font-medium max-w-[200px]"
-                    disabled={campaigns.length === 0}
+                    value={campaignIdFromUrl}
+                    onChange={(e) => handleCampaignChange(e.target.value)}
+                    className="h-8 rounded-md border border-zinc-200 bg-white text-zinc-900 px-3 py-1 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-300 font-medium max-w-[200px] appearance-none"
+                    disabled={campaigns.length === 0 || loading || isPending}
                   >
                     {campaigns.length === 0 ? (
                       <option value="">No campaigns</option>
@@ -671,6 +710,7 @@ export default function Leads({
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-[60px]">S.No.</TableHead>
+                      <TableHead className="w-[45px]"></TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Company</TableHead>
@@ -687,6 +727,32 @@ export default function Leads({
                       <TableRow key={lead.id}>
                         <TableCell className="font-mono text-[12px] text-muted-foreground">
                           {((currentPage - 1) * limit) + idx + 1}
+                        </TableCell>
+                        <TableCell>
+                          {processingLeadIds.includes(lead.id) ? (
+                            <Button variant="ghost" size="icon" disabled className="h-8 w-8" title="Adding to campaign...">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                            </Button>
+                          ) : queuedLeadIds.includes(lead.id) ? (
+                            <Button variant="ghost" size="icon" disabled className="h-8 w-8 bg-amber-500/10 text-amber-600 dark:text-amber-400" title="Queued (waiting to send)...">
+                              <Loader2 className="h-3.5 w-3.5 animate-pulse text-amber-500" />
+                            </Button>
+                          ) : lead.in_campaign ? (
+                            <div className="flex items-center justify-center h-8 w-8 text-emerald-500" title="Lead is in this campaign">
+                              <Check className="h-4 w-4" />
+                            </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleAddLeadToCampaign(lead.id)}
+                              className="h-8 w-8 hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                              title="Add to campaign"
+                              disabled={campaigns.length === 0 || loading || isPending}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          )}
                         </TableCell>
                         <TableCell className="font-medium">{lead.name ?? "—"}</TableCell>
                         <TableCell>{lead.email}</TableCell>
@@ -717,26 +783,6 @@ export default function Leads({
                         <TableCell><Badge variant={statusVariant(lead.status)} className="capitalize">{(lead.status ?? "new").replace(/_/g, " ")}</Badge></TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end items-center gap-1">
-                            {processingLeadIds.includes(lead.id) ? (
-                              <Button variant="ghost" size="icon" disabled className="h-8 w-8" title="Adding to campaign...">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                              </Button>
-                            ) : queuedLeadIds.includes(lead.id) ? (
-                              <Button variant="ghost" size="icon" disabled className="h-8 w-8 bg-amber-500/10 text-amber-600 dark:text-amber-400" title="Queued (waiting to send)...">
-                                <Loader2 className="h-3.5 w-3.5 animate-pulse" />
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleAddLeadToCampaign(lead.id)}
-                                className="h-8 w-8 hover:bg-primary/10 text-muted-foreground hover:text-primary"
-                                title="Add to campaign"
-                                disabled={campaigns.length === 0}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </Button>
-                            )}
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(lead)} className="h-8 w-8 hover:bg-secondary" title="Edit"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></Button>
                             {lead.user_id === user?.id && (
                               <Button variant="ghost" size="icon" onClick={() => { setLeadToDelete(lead); setDeleteDialogOpen(true); }} className="h-8 w-8 hover:bg-destructive/10" title="Delete"><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>

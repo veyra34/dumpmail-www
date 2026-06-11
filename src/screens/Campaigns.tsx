@@ -221,7 +221,7 @@ export default function Campaigns({
       const [campaignsRes, templatesRes, leadsRes, senderRes] = await Promise.all([
         fetchCampaigns<Campaign>(user.id, pageNumber, limit),
         fetchTemplates<Template>(user.id),
-        fetchLeads<Lead>(user.id),
+        fetchLeads<Lead>(null, user.id),
         fetchSenders<Sender>(user.id),
       ]);
       setCampaigns(campaignsRes?.data ?? []);
