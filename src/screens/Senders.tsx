@@ -38,6 +38,16 @@ import type { Tables } from "@/integrations/supabase/types";
 import { createSenderAccount, fetchSenders, updateSenderAccount, deleteSenderAccount } from "@/app/actions/admin-actions";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Mailbox, Plus, Edit, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Sender = Tables<"sender_accounts">;
 
@@ -54,12 +64,18 @@ function healthVariant(score: number | null) {
 
 export default function Senders({
   initialSenders,
+  initialSendersCount,
 }: {
   initialSenders: Sender[];
+  initialSendersCount: number;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [senders, setSenders] = useState<Sender[]>(initialSenders);
+  const [totalCount, setTotalCount] = useState<number>(initialSendersCount);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const limit = 10;
+  const totalPages = Math.ceil(totalCount / limit);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +106,7 @@ export default function Senders({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [senderToDelete, setSenderToDelete] = useState<Sender | null>(null);
 
-  const loadSenders = async () => {
+  const loadSenders = async (pageNumber: number = currentPage) => {
     if (!user) {
       setLoading(false);
       return;
@@ -98,8 +114,10 @@ export default function Senders({
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSenders<Sender>(user.id);
-      setSenders(data ?? []);
+      const res = await fetchSenders<Sender>(user.id, pageNumber, limit);
+      setSenders(res?.data ?? []);
+      setTotalCount(res?.count ?? 0);
+      setCurrentPage(pageNumber);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Failed to load sender accounts");
     }
@@ -123,7 +141,7 @@ export default function Senders({
       setCreateForm({ email: "", displayName: "", smtpHost: "smtp.gmail.com", smtpPort: "587", smtpUserEmail: "", smtpPassword: "", smtpSecure: false });
       setView("list");
       toast({ title: "Sender account added" });
-      await loadSenders();
+      await loadSenders(1);
     } catch (requestError) {
       toast({
         title: "Sender failed",
@@ -316,6 +334,7 @@ export default function Senders({
               ) : error ? (
                 <div className="px-4 py-12 text-center text-sm text-destructive">{error}</div>
               ) : senders.length ? (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -359,6 +378,62 @@ export default function Senders({
                     ))}
                   </TableBody>
                 </Table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-secondary/10 flex-wrap gap-4">
+                    <div className="text-[13px] text-muted-foreground">
+                      Showing <span className="font-medium text-foreground">{Math.min((currentPage - 1) * limit + 1, totalCount)}</span> to{" "}
+                      <span className="font-medium text-foreground">{Math.min(currentPage * limit, totalCount)}</span> of{" "}
+                      <span className="font-medium text-foreground">{totalCount}</span> senders
+                    </div>
+                    <Pagination className="w-auto mx-0">
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => currentPage > 1 && loadSenders(currentPage - 1)}
+                            className={cn("cursor-pointer", currentPage === 1 && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                        {(() => {
+                          const pages: (number | string)[] = [];
+                          for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                              pages.push(i);
+                            } else if (pages[pages.length - 1] !== "ellipsis") {
+                              pages.push("ellipsis");
+                            }
+                          }
+                          return pages.map((pageNum, idx) => {
+                            if (pageNum === "ellipsis") {
+                              return (
+                                <PaginationItem key={`ellipsis-${idx}`}>
+                                  <PaginationEllipsis />
+                                </PaginationItem>
+                              );
+                            }
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  isActive={currentPage === pageNum}
+                                  onClick={() => loadSenders(pageNum as number)}
+                                  className="cursor-pointer"
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          });
+                        })()}
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => currentPage < totalPages && loadSenders(currentPage + 1)}
+                            className={cn("cursor-pointer", currentPage === totalPages && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                )}
+                </>
               ) : (
                 <div className="px-4 py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-border bg-secondary/40">

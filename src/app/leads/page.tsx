@@ -14,10 +14,16 @@ export default async function Page() {
     redirect("/");
   }
 
-  const [leads, campaigns] = await Promise.all([
-    fetchLeads<Lead>(userId),
+  const [leadsRes, campaignsRes] = await Promise.all([
+    fetchLeads<Lead>(userId, 1, 10),
     fetchCampaigns<Campaign>(userId),
   ]);
 
-  return <Leads initialLeads={leads ?? []} initialCampaigns={campaigns ?? []} />;
+  return (
+    <Leads
+      initialLeads={leadsRes?.data ?? []}
+      initialLeadsCount={leadsRes?.count ?? 0}
+      initialCampaigns={campaignsRes?.data ?? []}
+    />
+  );
 }

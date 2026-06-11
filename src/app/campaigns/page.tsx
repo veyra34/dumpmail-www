@@ -21,8 +21,8 @@ export default async function Page() {
     redirect("/");
   }
 
-  const [campaigns, templates, leads, senders] = await Promise.all([
-    fetchCampaigns<Campaign>(userId),
+  const [campaignsRes, templatesRes, leadsRes, sendersRes] = await Promise.all([
+    fetchCampaigns<Campaign>(userId, 1, 10),
     fetchTemplates<Template>(userId),
     fetchLeads<Lead>(userId),
     fetchSenders<Sender>(userId),
@@ -30,10 +30,11 @@ export default async function Page() {
 
   return (
     <Campaigns
-      initialCampaigns={campaigns ?? []}
-      initialTemplates={templates ?? []}
-      initialLeads={leads ?? []}
-      initialSenders={senders ?? []}
+      initialCampaigns={campaignsRes?.data ?? []}
+      initialCampaignsCount={campaignsRes?.count ?? 0}
+      initialTemplates={templatesRes?.data ?? []}
+      initialLeads={leadsRes?.data ?? []}
+      initialSenders={sendersRes?.data ?? []}
     />
   );
 }

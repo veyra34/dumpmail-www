@@ -13,7 +13,12 @@ export default async function Page() {
     redirect("/");
   }
 
-  const templates = await fetchTemplates<Template>(userId);
+  const templatesRes = await fetchTemplates<Template>(userId, 1, 10);
 
-  return <Templates initialTemplates={templates ?? []} />;
+  return (
+    <Templates
+      initialTemplates={templatesRes?.data ?? []}
+      initialTemplatesCount={templatesRes?.count ?? 0}
+    />
+  );
 }

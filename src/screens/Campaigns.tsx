@@ -72,6 +72,16 @@ import {
   X,
   Layers,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Campaign = Tables<"campaigns">;
 type Template = Tables<"email_templates">;
@@ -152,11 +162,13 @@ function FL({ children, req }: { children: React.ReactNode; req?: boolean }) {
 
 export default function Campaigns({
   initialCampaigns,
+  initialCampaignsCount,
   initialTemplates,
   initialLeads,
   initialSenders,
 }: {
   initialCampaigns: Campaign[];
+  initialCampaignsCount: number;
   initialTemplates: Template[];
   initialLeads: Lead[];
   initialSenders: Sender[];
@@ -165,6 +177,10 @@ export default function Campaigns({
   const { toast } = useToast();
 
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
+  const [totalCount, setTotalCount] = useState<number>(initialCampaignsCount);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const limit = 10;
+  const totalPages = Math.ceil(totalCount / limit);
   const [templates, setTemplates] = useState<Template[]>(initialTemplates);
   const [leads, setLeads] = useState<Lead[]>(initialLeads);
   const [senders, setSenders] = useState<Sender[]>(initialSenders);
@@ -197,21 +213,28 @@ export default function Campaigns({
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
   /* ── Load workspace ─────────────────────────────────────────────────────── */
-  const loadWorkspace = async () => {
+  const loadWorkspace = async (pageNumber: number = currentPage) => {
     if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const [campaignData, templateData, leadData, senderData] = await Promise.all([
-        fetchCampaigns<Campaign>(user.id),
+      const [campaignsRes, templatesRes, leadsRes, senderRes] = await Promise.all([
+        fetchCampaigns<Campaign>(user.id, pageNumber, limit),
         fetchTemplates<Template>(user.id),
         fetchLeads<Lead>(user.id),
         fetchSenders<Sender>(user.id),
       ]);
-      setCampaigns(campaignData ?? []);
-      setTemplates(templateData ?? []);
-      setLeads(leadData ?? []);
-      setSenders(senderData ?? []);
+      setCampaigns(campaignsRes?.data ?? []);
+      setTotalCount(campaignsRes?.count ?? 0);
+      setCurrentPage(pageNumber);
+
+      const templateData = templatesRes?.data ?? [];
+      const leadData = leadsRes?.data ?? [];
+      const senderData = senderRes?.data ?? [];
+
+      setTemplates(templateData);
+      setLeads(leadData);
+      setSenders(senderData);
 
       setCreateForm((v) => ({
         ...v,
@@ -302,8 +325,8 @@ export default function Campaigns({
       setCreateSteps([]);
       setSelectedLeadIds([]);
       setView("list");
-      toast({ title: "Campaign created" });
-      await loadWorkspace();
+      toast({ title: "Campaign launched" });
+      await loadWorkspace(1);
     } catch (err) {
       toast({ title: "Campaign failed", description: err instanceof Error ? err.message : "Unable to create", variant: "destructive" });
     }
@@ -802,6 +825,7 @@ export default function Campaigns({
               ) : error ? (
                 <div className="px-4 py-12 text-center text-sm text-destructive">{error}</div>
               ) : campaigns.length ? (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -842,6 +866,62 @@ export default function Campaigns({
                     ))}
                   </TableBody>
                 </Table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-secondary/10 flex-wrap gap-4">
+                    <div className="text-[13px] text-muted-foreground">
+                      Showing <span className="font-medium text-foreground">{Math.min((currentPage - 1) * limit + 1, totalCount)}</span> to{" "}
+                      <span className="font-medium text-foreground">{Math.min(currentPage * limit, totalCount)}</span> of{" "}
+                      <span className="font-medium text-foreground">{totalCount}</span> campaigns
+                    </div>
+                    <Pagination className="w-auto mx-0">
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => currentPage > 1 && loadWorkspace(currentPage - 1)}
+                            className={cn("cursor-pointer", currentPage === 1 && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                        {(() => {
+                          const pages: (number | string)[] = [];
+                          for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                              pages.push(i);
+                            } else if (pages[pages.length - 1] !== "ellipsis") {
+                              pages.push("ellipsis");
+                            }
+                          }
+                          return pages.map((pageNum, idx) => {
+                            if (pageNum === "ellipsis") {
+                              return (
+                                <PaginationItem key={`ellipsis-${idx}`}>
+                                  <PaginationEllipsis />
+                                </PaginationItem>
+                              );
+                            }
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  isActive={currentPage === pageNum}
+                                  onClick={() => loadWorkspace(pageNum as number)}
+                                  className="cursor-pointer"
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          });
+                        })()}
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => currentPage < totalPages && loadWorkspace(currentPage + 1)}
+                            className={cn("cursor-pointer", currentPage === totalPages && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                )}
+                </>
               ) : (
                 <div className="px-4 py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-border bg-secondary/40">

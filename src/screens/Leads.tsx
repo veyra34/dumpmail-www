@@ -66,6 +66,16 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Lead = Tables<"leads">;
 type Campaign = Tables<"campaigns">;
@@ -167,9 +177,11 @@ function splitCSVLine(line: string): string[] {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 export default function Leads({
   initialLeads,
+  initialLeadsCount,
   initialCampaigns,
 }: {
   initialLeads: Lead[];
+  initialLeadsCount: number;
   initialCampaigns: Campaign[];
 }) {
   const { user } = useAuth();
@@ -177,6 +189,10 @@ export default function Leads({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [leads, setLeads] = useState<Lead[]>(initialLeads);
+  const [totalCount, setTotalCount] = useState<number>(initialLeadsCount);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const limit = 10;
+  const totalPages = Math.ceil(totalCount / limit);
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -213,19 +229,22 @@ export default function Leads({
   }, [campaigns]);
 
   /* ── Load ───────────────────────────────────────────────────────────────── */
-  const loadData = async () => {
+  const loadData = async (pageNumber: number = currentPage) => {
     if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const [leadData, campaignData] = await Promise.all([
-        fetchLeads<Lead>(user.id),
+      const [leadsRes, campaignsRes] = await Promise.all([
+        fetchLeads<Lead>(user.id, pageNumber, limit),
         fetchCampaigns<Campaign>(user.id),
       ]);
-      setLeads(leadData ?? []);
-      setCampaigns(campaignData ?? []);
+      setLeads(leadsRes?.data ?? []);
+      setTotalCount(leadsRes?.count ?? 0);
+      setCurrentPage(pageNumber);
+      setCampaigns(campaignsRes?.data ?? []);
 
       // Restore last campaign from localStorage
+      const campaignData = campaignsRes?.data ?? [];
       const stored = typeof window !== "undefined" ? localStorage.getItem(LAST_CAMPAIGN_KEY) : null;
       if (stored && campaignData?.some((c) => c.id === stored)) {
         setImportCampaignId(stored);
@@ -250,7 +269,7 @@ export default function Leads({
       setCreateForm({ ...defaultForm, campaignId: createForm.campaignId }); // Keep campaignId for next entry
       setView("list");
       toast({ title: "Lead created" });
-      await loadData();
+      await loadData(1);
     } catch (err) {
       toast({ title: "Lead failed", description: err instanceof Error ? err.message : "Unable to create lead", variant: "destructive" });
     }
@@ -272,7 +291,7 @@ export default function Leads({
       setView("list");
       setEditingLead(null);
       toast({ title: "Lead updated" });
-      await loadData();
+      await loadData(currentPage);
     } catch (err) {
       toast({ title: "Update failed", description: err instanceof Error ? err.message : "Unable to update lead", variant: "destructive" });
     }
@@ -288,7 +307,7 @@ export default function Leads({
       setLeadToDelete(null);
       setDeleteDialogOpen(false);
       setView("list");
-      await loadData();
+      await loadData(currentPage);
     } catch (err) {
       toast({ title: "Deletion failed", description: err instanceof Error ? err.message : "Cannot delete lead", variant: "destructive" });
     }
@@ -338,7 +357,7 @@ export default function Leads({
 
       if (result.imported > 0) {
         toast({ title: `${result.imported} lead${result.imported !== 1 ? "s" : ""} imported` });
-        await loadData();
+        await loadData(1);
       }
     } catch (err) {
       toast({ title: "Import failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
@@ -495,6 +514,7 @@ export default function Leads({
               ) : error ? (
                 <div className="px-4 py-12 text-center text-sm text-destructive">{error}</div>
               ) : leads.length ? (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -538,6 +558,62 @@ export default function Leads({
                     ))}
                   </TableBody>
                 </Table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-secondary/10 flex-wrap gap-4">
+                    <div className="text-[13px] text-muted-foreground">
+                      Showing <span className="font-medium text-foreground">{Math.min((currentPage - 1) * limit + 1, totalCount)}</span> to{" "}
+                      <span className="font-medium text-foreground">{Math.min(currentPage * limit, totalCount)}</span> of{" "}
+                      <span className="font-medium text-foreground">{totalCount}</span> leads
+                    </div>
+                    <Pagination className="w-auto mx-0">
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => currentPage > 1 && loadData(currentPage - 1)}
+                            className={cn("cursor-pointer", currentPage === 1 && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                        {(() => {
+                          const pages: (number | string)[] = [];
+                          for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                              pages.push(i);
+                            } else if (pages[pages.length - 1] !== "ellipsis") {
+                              pages.push("ellipsis");
+                            }
+                          }
+                          return pages.map((pageNum, idx) => {
+                            if (pageNum === "ellipsis") {
+                              return (
+                                <PaginationItem key={`ellipsis-${idx}`}>
+                                  <PaginationEllipsis />
+                                </PaginationItem>
+                              );
+                            }
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  isActive={currentPage === pageNum}
+                                  onClick={() => loadData(pageNum as number)}
+                                  className="cursor-pointer"
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          });
+                        })()}
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => currentPage < totalPages && loadData(currentPage + 1)}
+                            className={cn("cursor-pointer", currentPage === totalPages && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                )}
+                </>
               ) : (
                 <div className="px-4 py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-border bg-secondary/40">

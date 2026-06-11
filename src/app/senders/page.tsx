@@ -13,7 +13,12 @@ export default async function Page() {
     redirect("/");
   }
 
-  const senders = await fetchSenders<Sender>(userId);
+  const sendersRes = await fetchSenders<Sender>(userId, 1, 10);
 
-  return <Senders initialSenders={senders ?? []} />;
+  return (
+    <Senders
+      initialSenders={sendersRes?.data ?? []}
+      initialSendersCount={sendersRes?.count ?? 0}
+    />
+  );
 }

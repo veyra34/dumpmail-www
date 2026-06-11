@@ -32,6 +32,16 @@ import {
   FileText, Loader2, Plus, Edit, Trash2, Paperclip,
   UploadCloud, X, FileCheck2, HardDrive, Library,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Template  = Tables<"email_templates">;
 type LibraryPdf = Tables<"template_attachments">;
@@ -471,13 +481,19 @@ function AttachedFileCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Templates({
   initialTemplates,
+  initialTemplatesCount,
 }: {
   initialTemplates: Template[];
+  initialTemplatesCount: number;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
 
   const [templates, setTemplates] = useState<Template[]>(initialTemplates);
+  const [totalCount, setTotalCount] = useState<number>(initialTemplatesCount);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const limit = 10;
+  const totalPages = Math.ceil(totalCount / limit);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -514,13 +530,15 @@ export default function Templates({
   };
 
   // Load templates
-  const loadTemplates = async () => {
+  const loadTemplates = async (pageNumber: number = currentPage) => {
     if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchTemplates<Template>(user.id);
-      setTemplates(data ?? []);
+      const res = await fetchTemplates<Template>(user.id, pageNumber, limit);
+      setTemplates(res?.data ?? []);
+      setTotalCount(res?.count ?? 0);
+      setCurrentPage(pageNumber);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load templates");
     }
@@ -567,7 +585,7 @@ export default function Templates({
       localStorage.removeItem("dumpmail_new_template_draft");
       setView("list");
       toast({ title: "Template added" });
-      await loadTemplates();
+      await loadTemplates(1);
     } catch (e) {
       toast({ title: "Failed to add template", variant: "destructive", description: e instanceof Error ? e.message : undefined });
     }
@@ -733,6 +751,7 @@ export default function Templates({
               ) : error ? (
                 <div className="px-4 py-12 text-center text-sm text-destructive">{error}</div>
               ) : templates.length ? (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -779,6 +798,62 @@ export default function Templates({
                     ))}
                   </TableBody>
                 </Table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-secondary/10 flex-wrap gap-4">
+                    <div className="text-[13px] text-muted-foreground">
+                      Showing <span className="font-medium text-foreground">{Math.min((currentPage - 1) * limit + 1, totalCount)}</span> to{" "}
+                      <span className="font-medium text-foreground">{Math.min(currentPage * limit, totalCount)}</span> of{" "}
+                      <span className="font-medium text-foreground">{totalCount}</span> templates
+                    </div>
+                    <Pagination className="w-auto mx-0">
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => currentPage > 1 && loadTemplates(currentPage - 1)}
+                            className={cn("cursor-pointer", currentPage === 1 && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                        {(() => {
+                          const pages: (number | string)[] = [];
+                          for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                              pages.push(i);
+                            } else if (pages[pages.length - 1] !== "ellipsis") {
+                              pages.push("ellipsis");
+                            }
+                          }
+                          return pages.map((pageNum, idx) => {
+                            if (pageNum === "ellipsis") {
+                              return (
+                                <PaginationItem key={`ellipsis-${idx}`}>
+                                  <PaginationEllipsis />
+                                </PaginationItem>
+                              );
+                            }
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  isActive={currentPage === pageNum}
+                                  onClick={() => loadTemplates(pageNum as number)}
+                                  className="cursor-pointer"
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          });
+                        })()}
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => currentPage < totalPages && loadTemplates(currentPage + 1)}
+                            className={cn("cursor-pointer", currentPage === totalPages && "pointer-events-none opacity-50")}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                )}
+                </>
               ) : (
                 <div className="px-4 py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-border bg-secondary/40">

@@ -181,34 +181,68 @@ export async function fetchDashboardStats(userId?: string) {
   } satisfies DashboardStats;
 }
 
-export async function fetchTemplates<T>(userId: string) {
+export async function fetchTemplates<T>(
+  userId: string,
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("email_templates")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
 }
 
-export async function fetchCampaigns<T>(userId: string) {
+export async function fetchCampaigns<T>(
+  userId: string,
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("campaigns")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
 }
 
-export async function fetchLeads<T>(userId?: string) {
+export async function fetchLeads<T>(
+  userId?: string,
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
 
-  let query = supabase.from("leads").select("*");
+  let query = supabase.from("leads").select("*", { count: "exact" });
 
   if (userId) {
     query = query.or(`user_id.eq.${userId},private.eq.false`);
@@ -216,10 +250,21 @@ export async function fetchLeads<T>(userId?: string) {
     query = query.eq("private", false);
   }
 
-  const { data, error } = await query.order("updated_at", { ascending: false });
+  query = query.order("updated_at", { ascending: false });
+
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
 
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
 }
 
 export async function fetchRuntimeConfigs<T>(campaignId?: string) {
@@ -286,45 +331,114 @@ export async function upsertCampaignSequences(campaignId: string, steps: Sequenc
   if (insertError) throw insertError;
 }
 
-export async function fetchSenders<T>(userId: string) {
+export async function fetchSenders<T>(
+  userId: string,
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("sender_accounts")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
 }
 
-export async function fetchEvents<T>() {
+export async function fetchEvents<T>(
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("email_events")
-    .select("*")
+    .select("*", { count: "exact" })
     .order("created_at", { ascending: false });
 
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
 }
 
-export async function fetchUserEvents<T>(userId: string) {
+export async function fetchUserEvents<T>(
+  userId: string,
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
   const supabase = createServerSupabase();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("email_events")
     .select(`
       *,
       campaign_leads!inner(
         campaigns!inner(id)
       )
-    `)
+    `, { count: "exact" })
     .eq("campaign_leads.campaigns.user_id", userId)
     .order("created_at", { ascending: false });
 
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
-  return (data ?? []) as T[];
+  return {
+    data: (data ?? []) as T[],
+    count: count ?? 0,
+  };
+}
+
+export async function fetchUserEventsStats(userId: string) {
+  const supabase = createServerSupabase();
+  const [totalRes, sentRes, replyRes] = await Promise.all([
+    supabase
+      .from("email_events")
+      .select("id, campaign_leads!inner(campaigns!inner(user_id))", { count: "exact", head: true })
+      .eq("campaign_leads.campaigns.user_id", userId),
+    supabase
+      .from("email_events")
+      .select("id, campaign_leads!inner(campaigns!inner(user_id))", { count: "exact", head: true })
+      .eq("campaign_leads.campaigns.user_id", userId)
+      .eq("event_type", "sent"),
+    supabase
+      .from("email_events")
+      .select("id, campaign_leads!inner(campaigns!inner(user_id))", { count: "exact", head: true })
+      .eq("campaign_leads.campaigns.user_id", userId)
+      .eq("event_type", "replied"),
+  ]);
+  return {
+    total: totalRes.count ?? 0,
+    sent: sentRes.count ?? 0,
+    replied: replyRes.count ?? 0,
+  };
 }
 
 export async function fetchCampaignLeadDetails(userId: string, campaignId: string) {
