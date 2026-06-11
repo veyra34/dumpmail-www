@@ -24,7 +24,7 @@ export default async function Page() {
   const [campaignsRes, templatesRes, leadsRes, sendersRes] = await Promise.all([
     fetchCampaigns<Campaign>(userId, 1, 10),
     fetchTemplates<Template>(userId),
-    fetchLeads<Lead>(userId),
+    fetchLeads<Lead>(null, userId),
     fetchSenders<Sender>(userId),
   ]);
 

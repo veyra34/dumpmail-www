@@ -15,7 +15,7 @@ export default async function Page() {
   }
 
   const [leadsRes, campaignsRes] = await Promise.all([
-    fetchLeads<Lead>(userId, 1, 10),
+    fetchLeads<Lead>(null, userId, 1, 10),
     fetchCampaigns<Campaign>(userId),
   ]);
 

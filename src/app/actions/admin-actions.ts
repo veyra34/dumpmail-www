@@ -237,10 +237,11 @@ export async function fetchCampaigns<T>(
 }
 
 export async function fetchLeads<T>(
+  campaignId?: string | null,
   userId?: string,
   page?: number,
   limit?: number
-): Promise<{ data: T[]; count: number }> {
+): Promise<{ data: (T & { in_campaign: boolean })[]; count: number }> {
   const supabase = createServerSupabase();
 
   let query = supabase.from("leads").select("*", { count: "exact" });
@@ -259,13 +260,85 @@ export async function fetchLeads<T>(
     query = query.range(from, to);
   }
 
-  const { data, error, count } = await query;
+  const { data: leadsData, error: leadsError, count } = await query;
 
-  if (error) throw error;
+  if (leadsError) throw leadsError;
+
+  const data = leadsData ?? [];
+  if (campaignId && data.length > 0) {
+    const leadIds = data.map((l: any) => l.id);
+    const { data: campaignLeads, error: clError } = await supabase
+      .from("campaign_leads")
+      .select("lead_id")
+      .eq("campaign_id", campaignId)
+      .in("lead_id", leadIds);
+
+    if (clError) throw clError;
+
+    const inCampaignIds = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
+    return {
+      data: data.map((lead: any) => ({
+        ...lead,
+        in_campaign: inCampaignIds.has(lead.id),
+      })) as (T & { in_campaign: boolean })[],
+      count: count ?? 0,
+    };
+  }
+
   return {
-    data: (data ?? []) as T[],
+    data: data.map((lead: any) => ({
+      ...lead,
+      in_campaign: false,
+    })) as (T & { in_campaign: boolean })[],
     count: count ?? 0,
   };
+}
+
+export async function fetchLeadsCampaignStatus(
+  campaignId: string,
+  userId?: string,
+  page?: number,
+  limit?: number
+): Promise<{ id: string; in_campaign: boolean }[]> {
+  const supabase = createServerSupabase();
+
+  let query = supabase.from("leads").select("id");
+
+  if (userId) {
+    query = query.or(`user_id.eq.${userId},private.eq.false`);
+  } else {
+    query = query.eq("private", false);
+  }
+
+  query = query.order("updated_at", { ascending: false });
+
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data: leadsData, error: leadsError } = await query;
+
+  if (leadsError) throw leadsError;
+
+  const data = leadsData ?? [];
+  if (data.length === 0) return [];
+
+  const leadIds = data.map((l: any) => l.id);
+  const { data: campaignLeads, error: clError } = await supabase
+    .from("campaign_leads")
+    .select("lead_id")
+    .eq("campaign_id", campaignId)
+    .in("lead_id", leadIds);
+
+  if (clError) throw clError;
+
+  const inCampaignIds = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
+  return data.map((lead: any) => ({
+    id: lead.id,
+    in_campaign: inCampaignIds.has(lead.id),
+  }));
 }
 
 export async function fetchRuntimeConfigs<T>(campaignId?: string) {
