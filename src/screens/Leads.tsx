@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ import {
   fetchCampaigns,
   fetchLeads,
   updateLead,
+  addLeadsToCampaign,
   type BulkImportLeadsResult,
 } from "@/app/actions/admin-actions";
 import { useToast } from "@/hooks/use-toast";
@@ -177,6 +178,16 @@ function splitCSVLine(line: string): string[] {
   return result;
 }
 
+function debounce(fn: (...args: any[]) => void, delay: number) {
+  let timer: NodeJS.Timeout;
+  return function (this: any, ...args: any[]) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      fn.apply(this, args);
+    }, delay);
+  };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════ */
 export default function Leads({
   initialLeads,
@@ -200,6 +211,105 @@ export default function Leads({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* ── Campaign Lead Batching / Debounce States ── */
+  type PendingLeadItem = {
+    leadId: string;
+    campaignId: string;
+  };
+
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>(() => {
+    if (initialCampaigns && initialCampaigns.length > 0) {
+      const oldest = [...initialCampaigns].sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return dateA - dateB;
+      })[0];
+      return oldest?.id || "";
+    }
+    return "";
+  });
+  const [queuedLeadIds, setQueuedLeadIds] = useState<string[]>([]);
+  const [processingLeadIds, setProcessingLeadIds] = useState<string[]>([]);
+
+  const pendingLeadsRef = useRef<PendingLeadItem[]>([]);
+
+  // Create the debounced function once with useMemo instead of useEffect
+  const debouncedAddLeads = useMemo(
+    () =>
+      debounce(async () => {
+        const itemsToAdd = [...pendingLeadsRef.current];
+        if (itemsToAdd.length === 0) return;
+
+        console.log(`[Debounce Log] Debounce fired! Processing ${itemsToAdd.length} queued items:`, itemsToAdd);
+
+        // Reset the queue/pending refs immediately before async requests
+        pendingLeadsRef.current = [];
+        setQueuedLeadIds([]);
+
+        // Group leads by campaignId
+        const grouped = itemsToAdd.reduce((acc, item) => {
+          if (!acc[item.campaignId]) {
+            acc[item.campaignId] = [];
+          }
+          acc[item.campaignId].push(item.leadId);
+          return acc;
+        }, {} as Record<string, string[]>);
+
+        // Move all leads to processing state
+        const allLeadIds = itemsToAdd.map((item) => item.leadId);
+        setProcessingLeadIds((prev) => [...prev, ...allLeadIds]);
+
+        // Process each campaign batch sequentially
+        const campaignIds = Object.keys(grouped);
+        for (const cid of campaignIds) {
+          const leadsForCid = grouped[cid];
+          console.log(`[Debounce Log] Sending batch of ${leadsForCid.length} leads to campaign: ${cid}`);
+          try {
+            const result = await addLeadsToCampaign(cid, leadsForCid);
+            console.log(`[Debounce Log] Batch insert success for campaign ${cid}:`, result);
+            toast({
+              title: "Leads added",
+              description: `Successfully added ${result.attachedCount} new lead(s) to campaign. (${result.alreadyAttachedCount} already in campaign).`,
+            });
+          } catch (err) {
+            console.error(`[Debounce Log] Batch insert error for campaign ${cid}:`, err);
+            toast({
+              title: "Failed to add leads",
+              description: err instanceof Error ? err.message : "An error occurred while adding leads to the campaign.",
+              variant: "destructive",
+            });
+          } finally {
+            // Remove leads for this campaign from processing state
+            setProcessingLeadIds((prev) => prev.filter((id) => !leadsForCid.includes(id)));
+          }
+        }
+      }, 1500),
+    [toast]
+  );
+
+  const handleAddLeadToCampaign = (leadId: string) => {
+    if (!selectedCampaignId) {
+      toast({
+        title: "No campaign selected",
+        description: "Please select a campaign first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isAlreadyQueued = pendingLeadsRef.current.some((item) => item.leadId === leadId);
+    if (!isAlreadyQueued && !processingLeadIds.includes(leadId)) {
+      pendingLeadsRef.current.push({
+        leadId,
+        campaignId: selectedCampaignId,
+      });
+      setQueuedLeadIds(pendingLeadsRef.current.map((item) => item.leadId));
+      console.log(`[Debounce Log] Clicked add for lead: ${leadId} (Campaign: ${selectedCampaignId}). Queue:`, pendingLeadsRef.current);
+      
+      debouncedAddLeads();
+    }
+  };
 
   type ViewState = "list" | "create" | "edit" | "import";
   const [view, setView] = useState<ViewState>("list");
@@ -244,10 +354,24 @@ export default function Leads({
       setLeads(leadsRes?.data ?? []);
       setTotalCount(leadsRes?.count ?? 0);
       setCurrentPage(pageNumber);
-      setCampaigns(campaignsRes?.data ?? []);
+      
+      const campaignData = campaignsRes?.data ?? [];
+      setCampaigns(campaignData);
+
+      // Set default selected campaign if not already selected
+      if (campaignData.length > 0) {
+        setSelectedCampaignId((curr) => {
+          if (curr && campaignData.some((c) => c.id === curr)) return curr;
+          const oldest = [...campaignData].sort((a, b) => {
+            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return dateA - dateB;
+          })[0];
+          return oldest?.id || "";
+        });
+      }
 
       // Restore last campaign from localStorage
-      const campaignData = campaignsRes?.data ?? [];
       const stored = typeof window !== "undefined" ? localStorage.getItem(LAST_CAMPAIGN_KEY) : null;
       if (stored && campaignData?.some((c) => c.id === stored)) {
         setImportCampaignId(stored);
@@ -512,9 +636,30 @@ export default function Leads({
             </div>
 
             <section className="rounded-md border border-border bg-card overflow-hidden shadow-sm">
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-[14px] font-semibold">Lead database</h2>
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/30">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-[14px] font-semibold">Lead database</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-muted-foreground font-medium">Add to Campaign:</span>
+                  <select
+                    value={selectedCampaignId}
+                    onChange={(e) => setSelectedCampaignId(e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-3 py-1 text-[12px] ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 font-medium max-w-[200px]"
+                    disabled={campaigns.length === 0}
+                  >
+                    {campaigns.length === 0 ? (
+                      <option value="">No campaigns</option>
+                    ) : (
+                      campaigns.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
               </div>
               {loading ? (
                 <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading leads...</div>
@@ -572,6 +717,26 @@ export default function Leads({
                         <TableCell><Badge variant={statusVariant(lead.status)} className="capitalize">{(lead.status ?? "new").replace(/_/g, " ")}</Badge></TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end items-center gap-1">
+                            {processingLeadIds.includes(lead.id) ? (
+                              <Button variant="ghost" size="icon" disabled className="h-8 w-8" title="Adding to campaign...">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                              </Button>
+                            ) : queuedLeadIds.includes(lead.id) ? (
+                              <Button variant="ghost" size="icon" disabled className="h-8 w-8 bg-amber-500/10 text-amber-600 dark:text-amber-400" title="Queued (waiting to send)...">
+                                <Loader2 className="h-3.5 w-3.5 animate-pulse" />
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleAddLeadToCampaign(lead.id)}
+                                className="h-8 w-8 hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                                title="Add to campaign"
+                                disabled={campaigns.length === 0}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            )}
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(lead)} className="h-8 w-8 hover:bg-secondary" title="Edit"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></Button>
                             {lead.user_id === user?.id && (
                               <Button variant="ghost" size="icon" onClick={() => { setLeadToDelete(lead); setDeleteDialogOpen(true); }} className="h-8 w-8 hover:bg-destructive/10" title="Delete"><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>

@@ -1058,3 +1058,37 @@ export async function deleteCampaign(userId: string, id: string) {
   if (error) throw error;
   return true;
 }
+
+export async function addLeadsToCampaign(campaignId: string, leadIds: string[]) {
+  const supabase = createServerSupabase();
+  const now = new Date().toISOString();
+
+  // Only attach leads not already in the campaign
+  const { data: existing } = await supabase
+    .from("campaign_leads")
+    .select("lead_id")
+    .eq("campaign_id", campaignId)
+    .in("lead_id", leadIds);
+
+  const existingIds = new Set((existing ?? []).map((e) => e.lead_id));
+  const toAttach = leadIds.filter((id) => !existingIds.has(id));
+
+  if (toAttach.length > 0) {
+    const { error } = await supabase.from("campaign_leads").insert(
+      toAttach.map((leadId) => ({
+        campaign_id: campaignId,
+        lead_id: leadId,
+        current_step: 0,
+        next_send_at: now,
+        status: "pending",
+      }))
+    );
+    if (error) throw error;
+  }
+
+  return {
+    attachedCount: toAttach.length,
+    alreadyAttachedCount: leadIds.length - toAttach.length,
+  };
+}
+
