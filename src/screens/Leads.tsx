@@ -116,12 +116,13 @@ const defaultForm = {
   status: "new",
   private: true,
   campaignId: "",
+  linkedin_url: "",
 };
 
 type LeadForm = typeof defaultForm;
 
 /* ── CSV parsing ──────────────────────────────────────────────────────────── */
-type CsvRow = { name: string; email: string; company: string; role: string; _row: number };
+type CsvRow = { name: string; email: string; company: string; role: string; linkedin_url?: string; _row: number };
 
 function parseCSV(text: string): { rows: CsvRow[]; errors: string[] } {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
@@ -137,6 +138,7 @@ function parseCSV(text: string): { rows: CsvRow[]; errors: string[] } {
   const emailIdx = colIdx(["email", "mail"]);
   const companyIdx = colIdx(["company", "org", "organisation", "organization"]);
   const roleIdx = colIdx(["role", "title", "position", "jobtitle"]);
+  const linkedinIdx = colIdx(["linkedin", "linkedinurl", "linkedin_url"]);
 
   if (emailIdx === -1) {
     return { rows: [], errors: ["CSV must contain an 'email' column."] };
@@ -153,6 +155,7 @@ function parseCSV(text: string): { rows: CsvRow[]; errors: string[] } {
       name: nameIdx >= 0 ? (parts[nameIdx] ?? "").trim().replace(/^"|"$/g, "") : "",
       company: companyIdx >= 0 ? (parts[companyIdx] ?? "").trim().replace(/^"|"$/g, "") : "",
       role: roleIdx >= 0 ? (parts[roleIdx] ?? "").trim().replace(/^"|"$/g, "") : "",
+      linkedin_url: linkedinIdx >= 0 ? (parts[linkedinIdx] ?? "").trim().replace(/^"|"$/g, "") : "",
       _row: i + 1,
     });
   }
@@ -278,7 +281,7 @@ export default function Leads({
 
   const handleStartEdit = (lead: Lead) => {
     setEditingLead(lead);
-    setEditForm({ name: lead.name ?? "", email: lead.email, company: lead.company ?? "", role: lead.role ?? "", source: lead.source ?? "csv", status: lead.status ?? "new", private: lead.private ?? false, campaignId: "" });
+    setEditForm({ name: lead.name ?? "", email: lead.email, company: lead.company ?? "", role: lead.role ?? "", source: lead.source ?? "csv", status: lead.status ?? "new", private: lead.private ?? false, campaignId: "", linkedin_url: lead.linkedin_url ?? "" });
     setView("edit");
   };
 
@@ -437,12 +440,16 @@ export default function Leads({
             <p className="text-[11px] text-muted-foreground">{form.private ? "Only visible to you" : "Visible to all users in your workspace"}</p>
           </div>
         </div>
-        <div className="pt-5 flex gap-5">
-          <div className="space-y-1.5 w-1/2">
+        <div className="grid gap-x-5 gap-y-5 md:grid-cols-3 pt-5">
+          <div className="space-y-1.5">
             <Label htmlFor="lead-source" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Source</Label>
             <Input id="lead-source" placeholder="e.g. csv, linkedin, manual" className="h-9 text-[13px]" value={form.source} onChange={(e) => setForm((v) => ({ ...v, source: e.target.value }))} />
           </div>
-          <div className="space-y-1.5 w-1/2">
+          <div className="space-y-1.5">
+            <Label htmlFor="lead-linkedin" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">LinkedIn URL</Label>
+            <Input id="lead-linkedin" placeholder="https://linkedin.com/in/username" className="h-9 text-[13px]" value={form.linkedin_url || ""} onChange={(e) => setForm((v) => ({ ...v, linkedin_url: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
             <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Assign to Campaign <span className="lowercase normal-case font-normal text-muted-foreground ml-1">— optional</span></Label>
             <select
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
@@ -518,24 +525,42 @@ export default function Leads({
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-[60px]">S.No.</TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Company</TableHead>
                       <TableHead>Role</TableHead>
+                      <TableHead>LinkedIn</TableHead>
                       <TableHead>Source</TableHead>
                       <TableHead>Visibility</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Last contacted</TableHead>
                       <TableHead className="w-[90px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {leads.map((lead) => (
+                    {leads.map((lead, idx) => (
                       <TableRow key={lead.id}>
+                        <TableCell className="font-mono text-[12px] text-muted-foreground">
+                          {((currentPage - 1) * limit) + idx + 1}
+                        </TableCell>
                         <TableCell className="font-medium">{lead.name ?? "—"}</TableCell>
                         <TableCell>{lead.email}</TableCell>
                         <TableCell>{lead.company ?? "—"}</TableCell>
                         <TableCell>{lead.role ?? "—"}</TableCell>
+                        <TableCell>
+                          {lead.linkedin_url ? (
+                            <a
+                              href={lead.linkedin_url.startsWith("http") ? lead.linkedin_url : `https://${lead.linkedin_url}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline font-medium text-[13px] inline-flex items-center gap-1"
+                            >
+                              LinkedIn
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground/40">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="capitalize">{lead.source ?? "—"}</TableCell>
                         <TableCell>
                           {lead.private ? (
@@ -545,7 +570,6 @@ export default function Leads({
                           )}
                         </TableCell>
                         <TableCell><Badge variant={statusVariant(lead.status)} className="capitalize">{(lead.status ?? "new").replace(/_/g, " ")}</Badge></TableCell>
-                        <TableCell className="text-muted-foreground">{formatDate((lead as any).last_contacted_at)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end items-center gap-1">
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(lead)} className="h-8 w-8 hover:bg-secondary" title="Edit"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></Button>
@@ -786,6 +810,7 @@ export default function Leads({
                           <TableHead className="text-[11px]">Email</TableHead>
                           <TableHead className="text-[11px]">Company</TableHead>
                           <TableHead className="text-[11px]">Role</TableHead>
+                          <TableHead className="text-[11px]">LinkedIn</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -796,6 +821,7 @@ export default function Leads({
                             <TableCell className="text-[12px] font-medium">{row.email}</TableCell>
                             <TableCell className="text-[12px]">{row.company || "—"}</TableCell>
                             <TableCell className="text-[12px]">{row.role || "—"}</TableCell>
+                            <TableCell className="text-[12px] truncate max-w-[120px]">{row.linkedin_url || "—"}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

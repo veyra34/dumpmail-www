@@ -56,6 +56,7 @@ export type CreateLeadInput = {
   private?: boolean;
   user_id?: string | null;
   campaign_id?: string | null;
+  linkedin_url?: string | null;
 };
 
 export type CreateSenderInput = {
@@ -651,6 +652,7 @@ export async function createLead<T>(input: CreateLeadInput) {
       status: input.status || "new",
       private: input.private ?? true,
       user_id: input.user_id ?? null,
+      linkedin_url: input.linkedin_url || null,
     })
     .select("*")
     .single();
@@ -691,7 +693,7 @@ export type BulkImportLeadsResult = {
 
 export async function bulkImportLeads(
   userId: string,
-  rows: { name: string; email: string; company?: string; role?: string }[],
+  rows: { name: string; email: string; company?: string; role?: string; linkedin_url?: string; linkedin?: string }[],
   campaignId?: string | null
 ): Promise<BulkImportLeadsResult> {
   const supabase = createServerSupabase();
@@ -716,6 +718,7 @@ export async function bulkImportLeads(
           status: "new",
           private: true,
           user_id: userId,
+          linkedin_url: row.linkedin_url || row.linkedin || null,
         }))
       )
       .select("id, email");
@@ -910,6 +913,7 @@ export async function updateLead<T>(id: string, input: CreateLeadInput) {
       source: input.source || "csv",
       status: input.status || "new",
       private: input.private ?? true,
+      linkedin_url: input.linkedin_url || null,
 
     })
     .eq("id", id)
