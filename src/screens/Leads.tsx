@@ -737,11 +737,7 @@ export default function Leads({
                             <Button variant="ghost" size="icon" disabled className="h-8 w-8 bg-amber-500/10 text-amber-600 dark:text-amber-400" title="Queued (waiting to send)...">
                               <Loader2 className="h-3.5 w-3.5 animate-pulse text-amber-500" />
                             </Button>
-                          ) : lead.in_campaign ? (
-                            <div className="flex items-center justify-center h-8 w-8 text-emerald-500" title="Lead is in this campaign">
-                              <Check className="h-4 w-4" />
-                            </div>
-                          ) : (
+                          ) : lead.in_campaign ? null : (
                             <Button
                               variant="ghost"
                               size="icon"
