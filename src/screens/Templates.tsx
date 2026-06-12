@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,11 +26,13 @@ import type { Tables } from "@/integrations/supabase/types";
 import {
   createTemplate, fetchTemplates, updateTemplate, deleteTemplate,
   uploadAndRegisterAttachment, deleteAttachmentRecord, fetchUserAttachments,
+  publishTemplateToGlobal, unpublishGlobalTemplate,
 } from "@/app/actions/admin-actions";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Loader2, Plus, Edit, Trash2, Paperclip,
   UploadCloud, X, FileCheck2, HardDrive, Library,
+  Globe, Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -42,9 +44,11 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import GlobalTemplatesSection from "@/components/GlobalTemplatesSection";
 
-type Template  = Tables<"email_templates">;
-type LibraryPdf = Tables<"template_attachments">;
+type Template      = Tables<"email_templates">;
+type GlobalTemplate = Tables<"global_email_templates">;
+type LibraryPdf    = Tables<"template_attachments">;
 
 type AttachmentState = {
   id?: string;        // library record id (if picked from library)
@@ -482,12 +486,17 @@ function AttachedFileCard({
 export default function Templates({
   initialTemplates,
   initialTemplatesCount,
+  globalTemplates,
+  userId: userIdProp,
 }: {
   initialTemplates: Template[];
   initialTemplatesCount: number;
+  globalTemplates: GlobalTemplate[];
+  userId: string;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, startTransition] = useTransition();
 
   const [templates, setTemplates] = useState<Template[]>(initialTemplates);
   const [totalCount, setTotalCount] = useState<number>(initialTemplatesCount);
@@ -517,6 +526,13 @@ export default function Templates({
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<Template | null>(null);
+
+  // Publish dialog
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [templateToPublish, setTemplateToPublish] = useState<Template | null>(null);
+  const [publishForm, setPublishForm] = useState({ category: "General", description: "" });
+  const [publishing, setPublishing] = useState(false);
+  const publishedIds = new Set(templates.filter((t) => t.is_published_to_global).map((t) => t.id));
 
   const openPicker = (target: "create" | "edit") => {
     setPickerTarget(target);
@@ -677,34 +693,86 @@ export default function Templates({
     </div>
   );
 
+  // Publish a template to global
+  const handlePublish = async () => {
+    if (!user || !templateToPublish) return;
+    setPublishing(true);
+    try {
+      await publishTemplateToGlobal(user.id, templateToPublish.id, {
+        category: publishForm.category,
+        description: publishForm.description,
+      });
+      setTemplates((prev) =>
+        prev.map((t) =>
+          t.id === templateToPublish.id ? { ...t, is_published_to_global: true } : t
+        )
+      );
+      toast({ title: "Template published to global library!" });
+      setPublishDialogOpen(false);
+      setTemplateToPublish(null);
+    } catch (e) {
+      toast({
+        title: "Failed to publish",
+        variant: "destructive",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    }
+    setPublishing(false);
+  };
+
+  const handleUnpublish = async (t: Template) => {
+    if (!user) return;
+    try {
+      await unpublishGlobalTemplate(user.id, t.id);
+      setTemplates((prev) =>
+        prev.map((tmpl) =>
+          tmpl.id === t.id ? { ...tmpl, is_published_to_global: false } : tmpl
+        )
+      );
+      toast({ title: "Template removed from global library" });
+    } catch (e) {
+      toast({
+        title: "Failed to unpublish",
+        variant: "destructive",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    }
+  };
+
   return (
     <AppLayout>
       <div className="max-w-[100rem] mx-auto p-6 md:p-8 space-y-6">
 
-        {/* Breadcrumb */}
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              {view === "list" ? (
-                <BreadcrumbPage className="text-[13px] font-medium text-foreground">Templates</BreadcrumbPage>
-              ) : (
+        {/* Breadcrumb – only shown on sub-views */}
+        {view !== "list" && (
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
                 <BreadcrumbLink className="text-[13px] font-medium cursor-pointer" onClick={() => setView("list")}>
                   Templates
                 </BreadcrumbLink>
+              </BreadcrumbItem>
+              {view === "create" && (
+                <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage className="text-[13px] font-medium text-foreground">New template</BreadcrumbPage></BreadcrumbItem></>
               )}
-            </BreadcrumbItem>
-            {view === "create" && (
-              <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage className="text-[13px] font-medium text-foreground">New template</BreadcrumbPage></BreadcrumbItem></>
-            )}
-            {view === "edit" && (
-              <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage className="text-[13px] font-medium text-foreground max-w-[220px] truncate">{editingTemplate ? `Edit · ${editingTemplate.name}` : "Edit template"}</BreadcrumbPage></BreadcrumbItem></>
-            )}
-          </BreadcrumbList>
-        </Breadcrumb>
+              {view === "edit" && (
+                <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage className="text-[13px] font-medium text-foreground max-w-[220px] truncate">{editingTemplate ? `Edit · ${editingTemplate.name}` : "Edit template"}</BreadcrumbPage></BreadcrumbItem></>
+              )}
+            </BreadcrumbList>
+          </Breadcrumb>
+        )}
 
         {/* ── LIST ── */}
         {view === "list" && (
           <>
+            {/* Global templates section */}
+            {globalTemplates.length > 0 && (
+              <GlobalTemplatesSection
+                globalTemplates={globalTemplates}
+                userId={userIdProp}
+              />
+            )}
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">Email templates</h1>
@@ -715,26 +783,6 @@ export default function Templates({
               <Button onClick={() => setView("create")} className="h-9 gap-2 text-[13px]">
                 <Plus className="h-3.5 w-3.5" /> Add template
               </Button>
-            </div>
-
-            {/* Stats */}
-            <div className="flex items-center gap-3 text-[13px] text-muted-foreground flex-wrap">
-              <span className="flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5" />
-                <span className="font-semibold text-foreground">{templates.length}</span>
-                {" "}template{templates.length !== 1 ? "s" : ""}
-              </span>
-              {templates.filter((t) => t.attachment_path).length > 0 && (
-                <>
-                  <span className="text-border">·</span>
-                  <span className="flex items-center gap-1.5">
-                    <Paperclip className="h-3.5 w-3.5" />
-                    <span className="font-semibold text-foreground">
-                      {templates.filter((t) => t.attachment_path).length}
-                    </span>{" "}with attachment
-                  </span>
-                </>
-              )}
             </div>
 
             {/* Table */}
@@ -786,6 +834,29 @@ export default function Templates({
                         <TableCell className="text-muted-foreground">{formatDate(t.created_at)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
+                            {publishedIds.has(t.id) ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleUnpublish(t)}
+                                className="h-8 px-2 text-[11px] gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                                title="Published to global — click to unpublish"
+                              >
+                                <Globe className="h-3 w-3" />
+                                Published
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => { setTemplateToPublish(t); setPublishForm({ category: "General", description: "" }); setPublishDialogOpen(true); }}
+                                className="h-8 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                title="Publish to global library"
+                              >
+                                <Send className="h-3 w-3" />
+                                Publish
+                              </Button>
+                            )}
                             <Button variant="ghost" size="icon" onClick={() => handleStartEdit(t)} className="h-8 w-8 hover:bg-secondary" title="Edit">
                               <Edit className="h-3.5 w-3.5 text-muted-foreground" />
                             </Button>
@@ -979,6 +1050,59 @@ export default function Templates({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Publish to global dialog */}
+      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-primary" />
+              Publish to Global Library
+            </DialogTitle>
+            <DialogDescription>
+              Share &quot;<span className="font-medium text-foreground">{templateToPublish?.name}</span>&quot; with the Dumpmail community. Anyone can add it to their library.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-medium text-muted-foreground">Category</Label>
+              <select
+                value={publishForm.category}
+                onChange={(e) => setPublishForm((v) => ({ ...v, category: e.target.value }))}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {["General", "Cold Outreach", "Follow-up", "Introduction", "Re-engagement", "Partnership"].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[12px] font-medium text-muted-foreground">
+                Description <span className="font-normal text-muted-foreground/60">(optional)</span>
+              </Label>
+              <Textarea
+                placeholder="Briefly describe when to use this template…"
+                className="min-h-[80px] text-[13px] font-sans resize-none"
+                value={publishForm.description}
+                onChange={(e) => setPublishForm((v) => ({ ...v, description: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setPublishDialogOpen(false)} className="text-[13px]">Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => void handlePublish()}
+              disabled={publishing}
+              className="gap-2 text-[13px]"
+            >
+              {publishing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <Globe className="h-3.5 w-3.5" />
+              Publish
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

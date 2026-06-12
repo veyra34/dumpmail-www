@@ -264,6 +264,7 @@ export type Database = {
           name: string
           subject: string
           user_id: string
+          is_published_to_global: boolean | null
         }
         Insert: {
           attachment_mime_type?: string | null
@@ -277,6 +278,7 @@ export type Database = {
           name: string
           subject: string
           user_id: string
+          is_published_to_global?: boolean | null
         }
         Update: {
           attachment_mime_type?: string | null
@@ -290,11 +292,84 @@ export type Database = {
           name?: string
           subject?: string
           user_id?: string
+          is_published_to_global?: boolean | null
         }
         Relationships: [
           {
             foreignKeyName: "email_templates_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_email_templates: {
+        Row: {
+          id: string
+          original_template_id: string | null
+          published_by_user_id: string | null
+          name: string
+          subject: string
+          body_text: string | null
+          preview_image_url: string | null
+          preview_image_path: string | null
+          category: string | null
+          description: string | null
+          is_published: boolean
+          is_featured: boolean
+          report_count: number
+          add_count: number
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          original_template_id?: string | null
+          published_by_user_id?: string | null
+          name: string
+          subject: string
+          body_text?: string | null
+          preview_image_url?: string | null
+          preview_image_path?: string | null
+          category?: string | null
+          description?: string | null
+          is_published?: boolean
+          is_featured?: boolean
+          report_count?: number
+          add_count?: number
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          original_template_id?: string | null
+          published_by_user_id?: string | null
+          name?: string
+          subject?: string
+          body_text?: string | null
+          preview_image_url?: string | null
+          preview_image_path?: string | null
+          category?: string | null
+          description?: string | null
+          is_published?: boolean
+          is_featured?: boolean
+          report_count?: number
+          add_count?: number
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_email_templates_original_template_id_fkey"
+            columns: ["original_template_id"]
+            isOneToOne: true
+            referencedRelation: "email_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "global_email_templates_published_by_user_id_fkey"
+            columns: ["published_by_user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -499,6 +574,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      increment_template_add_count: {
+        Args: {
+          p_template_id: string
+        }
+        Returns: number
+      }
       rpc_check_campaign_to_run_v2: {
         Args: { p_user_id: string }
         Returns: {

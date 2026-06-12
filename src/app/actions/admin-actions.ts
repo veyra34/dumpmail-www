@@ -275,11 +275,11 @@ export async function fetchLeads<T>(
 
     if (clError) throw clError;
 
-    const inCampaignIds = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
+    const leadSet = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
     return {
       data: data.map((lead: any) => ({
         ...lead,
-        in_campaign: inCampaignIds.has(lead.id),
+        in_campaign: leadSet.has(lead.id),
       })) as (T & { in_campaign: boolean })[],
       count: count ?? 0,
     };
@@ -334,10 +334,10 @@ export async function fetchLeadsCampaignStatus(
 
   if (clError) throw clError;
 
-  const inCampaignIds = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
+  const leadSet = new Set((campaignLeads ?? []).map((cl) => cl.lead_id));
   return data.map((lead: any) => ({
     id: lead.id,
-    in_campaign: inCampaignIds.has(lead.id),
+    in_campaign: leadSet.has(lead.id),
   }));
 }
 
@@ -711,6 +711,150 @@ export async function deleteTemplate(userId: string, templateId: string) {
   return true;
 }
 
+// ─── Global Template Marketplace ─────────────────────────────────────────────
+
+export async function fetchGlobalTemplates<T>(
+  page?: number,
+  limit?: number
+): Promise<{ data: T[]; count: number }> {
+  const supabase = createServerSupabase();
+  let query = supabase
+    .from("global_email_templates")
+    .select("*", { count: "exact" })
+    .eq("is_published", true)
+    .order("created_at", { ascending: false });
+
+  if (page !== undefined && limit !== undefined) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+  return { data: (data ?? []) as T[], count: count ?? 0 };
+}
+
+export async function addGlobalTemplateToLibrary(
+  userId: string,
+  globalTemplateId: string
+): Promise<{ template: unknown; newAddCount: number }> {
+  const supabase = createServerSupabase();
+  await ensurePublicUserForClient(supabase, userId);
+
+  // Fetch the global template
+  const { data: globalTemplate, error: fetchError } = await supabase
+    .from("global_email_templates")
+    .select("*")
+    .eq("id", globalTemplateId)
+    .eq("is_published", true)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  // Copy it into user's email_templates
+  const { data, error } = await supabase
+    .from("email_templates")
+    .insert({
+      user_id: userId,
+      name: globalTemplate.name,
+      subject: globalTemplate.subject,
+      body_text: globalTemplate.body_text,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw error;
+
+  // Atomically increment add_count and get the updated value back
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    "increment_template_add_count",
+    { p_template_id: globalTemplateId }
+  );
+
+  if (rpcError) {
+    console.error("Failed to increment global template add count:", rpcError);
+  }
+
+  return {
+    template: data,
+    newAddCount: typeof rpcData === "number" ? rpcData : globalTemplate.add_count + 1,
+  };
+}
+
+export async function publishTemplateToGlobal<T>(
+  userId: string,
+  templateId: string,
+  options?: { previewImageUrl?: string; category?: string; description?: string }
+): Promise<T> {
+  const supabase = createServerSupabase();
+  await ensurePublicUserForClient(supabase, userId);
+
+  // Fetch the user's template
+  const { data: template, error: fetchError } = await supabase
+    .from("email_templates")
+    .select("*")
+    .eq("id", templateId)
+    .eq("user_id", userId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  // Upsert into global_email_templates (by original_template_id to prevent duplicates)
+  const { data, error } = await supabase
+    .from("global_email_templates")
+    .upsert(
+      {
+        original_template_id: templateId,
+        published_by_user_id: userId,
+        name: template.name,
+        subject: template.subject,
+        body_text: template.body_text,
+        preview_image_url: options?.previewImageUrl ?? null,
+        category: options?.category ?? "General",
+        description: options?.description ?? null,
+        is_published: true,
+      },
+      { onConflict: "original_template_id" }
+    )
+    .select("*")
+    .single();
+
+  if (error) throw error;
+
+  // Mark the user template as published
+  await supabase
+    .from("email_templates")
+    .update({ is_published_to_global: true })
+    .eq("id", templateId)
+    .eq("user_id", userId);
+
+  return data as T;
+}
+
+export async function unpublishGlobalTemplate(
+  userId: string,
+  templateId: string
+): Promise<boolean> {
+  const supabase = createServerSupabase();
+  await ensurePublicUserForClient(supabase, userId);
+
+  const { error } = await supabase
+    .from("global_email_templates")
+    .update({ is_published: false })
+    .eq("original_template_id", templateId)
+    .eq("published_by_user_id", userId);
+
+  if (error) throw error;
+
+  await supabase
+    .from("email_templates")
+    .update({ is_published_to_global: false })
+    .eq("id", templateId)
+    .eq("user_id", userId);
+
+  return true;
+}
 
 export async function createLead<T>(input: CreateLeadInput) {
   const supabase = createServerSupabase();

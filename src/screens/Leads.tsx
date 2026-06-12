@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Tooltip,
@@ -56,7 +57,6 @@ import {
   fetchLeads,
   updateLead,
   addLeadsToCampaign,
-  fetchLeadsCampaignStatus,
   type BulkImportLeadsResult,
 } from "@/app/actions/admin-actions";
 import { useToast } from "@/hooks/use-toast";
@@ -204,14 +204,18 @@ export default function Leads({
   initialLeads,
   initialLeadsCount,
   initialCampaigns,
+  campaignIdFromUrl,
 }: {
   initialLeads: LeadWithCampaign[];
   initialLeadsCount: number;
   initialCampaigns: Campaign[];
+  campaignIdFromUrl: string;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   const [leads, setLeads] = useState<LeadWithCampaign[]>(initialLeads);
   const [totalCount, setTotalCount] = useState<number>(initialLeadsCount);
@@ -223,58 +227,39 @@ export default function Leads({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync initial props to local states when they change
+  useEffect(() => {
+    setLeads(initialLeads);
+  }, [initialLeads]);
+
+  useEffect(() => {
+    setTotalCount(initialLeadsCount);
+  }, [initialLeadsCount]);
+
+  useEffect(() => {
+    setCampaigns(initialCampaigns);
+  }, [initialCampaigns]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [campaignIdFromUrl]);
+
   /* ── Campaign Lead Batching / Debounce States ── */
   type PendingLeadItem = {
     leadId: string;
     campaignId: string;
   };
 
-  const selectedCampaignIdRef = useRef<string>("");
+  const selectedCampaignIdRef = useRef<string>(campaignIdFromUrl);
+  selectedCampaignIdRef.current = campaignIdFromUrl;
 
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string>(() => {
-    if (initialCampaigns && initialCampaigns.length > 0) {
-      const oldest = [...initialCampaigns].sort((a, b) => {
-        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return dateA - dateB;
-      })[0];
-      const id = oldest?.id || "";
-      selectedCampaignIdRef.current = id;
-      return id;
-    }
-    return "";
-  });
   const [queuedLeadIds, setQueuedLeadIds] = useState<string[]>([]);
   const [processingLeadIds, setProcessingLeadIds] = useState<string[]>([]);
-  const [fetchingCampaignStatus, setFetchingCampaignStatus] = useState(false);
 
-  const handleCampaignChange = async (newCampaignId: string) => {
-    selectedCampaignIdRef.current = newCampaignId;
-    setSelectedCampaignId(newCampaignId);
-
-    if (!user || !newCampaignId || leads.length === 0) return;
-
-    setFetchingCampaignStatus(true);
-    try {
-      const statusList = await fetchLeadsCampaignStatus(
-        newCampaignId,
-        user.id,
-        currentPage,
-        limit
-      );
-      const statusMap = new Map(statusList.map((item) => [item.id, item.in_campaign]));
-
-      setLeads((prevLeads) =>
-        prevLeads.map((l) => ({
-          ...l,
-          in_campaign: statusMap.get(l.id) ?? false,
-        }))
-      );
-    } catch (err) {
-      console.error("Failed to fetch campaign status:", err);
-    } finally {
-      setFetchingCampaignStatus(false);
-    }
+  const handleCampaignChange = (newCampaignId: string) => {
+    startTransition(() => {
+      router.push(`?campaign=${newCampaignId}`);
+    });
   };
 
   const pendingLeadsRef = useRef<PendingLeadItem[]>([]);
@@ -324,6 +309,7 @@ export default function Leads({
                 )
               );
             }
+            router.refresh();
           } catch (err) {
             console.error(`[Debounce Log] Batch insert error for campaign ${cid}:`, err);
             toast({
@@ -337,11 +323,11 @@ export default function Leads({
           }
         }
       }, 1500),
-    [toast]
+    [toast, router]
   );
 
   const handleAddLeadToCampaign = (leadId: string) => {
-    if (!selectedCampaignId) {
+    if (!campaignIdFromUrl) {
       toast({
         title: "No campaign selected",
         description: "Please select a campaign first.",
@@ -354,10 +340,10 @@ export default function Leads({
     if (!isAlreadyQueued && !processingLeadIds.includes(leadId)) {
       pendingLeadsRef.current.push({
         leadId,
-        campaignId: selectedCampaignId,
+        campaignId: campaignIdFromUrl,
       });
       setQueuedLeadIds(pendingLeadsRef.current.map((item) => item.leadId));
-      console.log(`[Debounce Log] Clicked add for lead: ${leadId} (Campaign: ${selectedCampaignId}). Queue:`, pendingLeadsRef.current);
+      console.log(`[Debounce Log] Clicked add for lead: ${leadId} (Campaign: ${campaignIdFromUrl}). Queue:`, pendingLeadsRef.current);
       
       debouncedAddLeads();
     }
@@ -399,7 +385,7 @@ export default function Leads({
     setLoading(true);
     setError(null);
     try {
-      const currentCampaignId = selectedCampaignIdRef.current || null;
+      const currentCampaignId = campaignIdFromUrl || null;
       const [leadsRes, campaignsRes] = await Promise.all([
         fetchLeads<Lead>(currentCampaignId, user.id, pageNumber, limit),
         fetchCampaigns<Campaign>(user.id),
@@ -412,37 +398,6 @@ export default function Leads({
       
       const campaignData = campaignsRes?.data ?? [];
       setCampaigns(campaignData);
-
-      // Set default selected campaign if not already selected
-      let finalCampaignId = selectedCampaignIdRef.current;
-      if (campaignData.length > 0 && (!finalCampaignId || !campaignData.some((c) => c.id === finalCampaignId))) {
-        const oldest = [...campaignData].sort((a, b) => {
-          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          return dateA - dateB;
-        })[0];
-        finalCampaignId = oldest?.id || "";
-        setSelectedCampaignId(finalCampaignId);
-        selectedCampaignIdRef.current = finalCampaignId;
-      }
-
-      // If we initially loaded without a campaign ID (null) but now have a default selected campaign,
-      // fetch the campaign status for the loaded leads immediately.
-      if (finalCampaignId && !currentCampaignId && leadsData.length > 0) {
-        const statusList = await fetchLeadsCampaignStatus(
-          finalCampaignId,
-          user.id,
-          pageNumber,
-          limit
-        );
-        const statusMap = new Map(statusList.map((item) => [item.id, item.in_campaign]));
-        setLeads((prevLeads) =>
-          prevLeads.map((l) => ({
-            ...l,
-            in_campaign: statusMap.get(l.id) ?? false,
-          }))
-        );
-      }
 
       // Restore last campaign from localStorage
       const stored = typeof window !== "undefined" ? localStorage.getItem(LAST_CAMPAIGN_KEY) : null;
@@ -728,10 +683,10 @@ export default function Leads({
                     </Tooltip>
                   </TooltipProvider>
                   <select
-                    value={selectedCampaignId}
+                    value={campaignIdFromUrl}
                     onChange={(e) => handleCampaignChange(e.target.value)}
                     className="h-8 rounded-md border border-zinc-200 bg-white text-zinc-900 px-3 py-1 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-300 font-medium max-w-[200px] appearance-none"
-                    disabled={campaigns.length === 0 || loading || fetchingCampaignStatus}
+                    disabled={campaigns.length === 0 || loading || isPending}
                   >
                     {campaigns.length === 0 ? (
                       <option value="">No campaigns</option>
@@ -782,18 +737,14 @@ export default function Leads({
                             <Button variant="ghost" size="icon" disabled className="h-8 w-8 bg-amber-500/10 text-amber-600 dark:text-amber-400" title="Queued (waiting to send)...">
                               <Loader2 className="h-3.5 w-3.5 animate-pulse text-amber-500" />
                             </Button>
-                          ) : lead.in_campaign ? (
-                            <div className="flex items-center justify-center h-8 w-8 text-emerald-500" title="Lead is in this campaign">
-                              <Check className="h-4 w-4" />
-                            </div>
-                          ) : (
+                          ) : lead.in_campaign ? null : (
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleAddLeadToCampaign(lead.id)}
                               className="h-8 w-8 hover:bg-primary/10 text-muted-foreground hover:text-primary"
                               title="Add to campaign"
-                              disabled={campaigns.length === 0 || loading || fetchingCampaignStatus}
+                              disabled={campaigns.length === 0 || loading || isPending}
                             >
                               <Plus className="h-4 w-4" />
                             </Button>
